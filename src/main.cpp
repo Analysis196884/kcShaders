@@ -6,7 +6,7 @@
 int main() {
     try {
         // Create and run the application
-        gui::App app("kcShaders", 1280, 720);
+        gui::App app("kcShaders");
         app.Run();
     }
     catch (const std::exception& e) {

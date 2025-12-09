@@ -5,12 +5,13 @@
 
 // Forward declarations
 struct GLFWwindow;
+namespace graphics { class Renderer; }
 
 namespace gui {
 
 class App {
 public:
-    App(const std::string& title = "kcShaders", int width = 1280, int height = 720);
+    App(const std::string& title = "kcShaders");
     ~App();
 
     // Disable copy and move
@@ -28,7 +29,7 @@ public:
     int GetHeight() const { return height_; }
 
 private:
-    bool Initialize(const std::string& title, int width, int height);
+    bool Initialize(const std::string& title);
     void Shutdown();
     void SetUIScaleFromSystemDPI();
     void PrepareImGuiFonts();
@@ -50,13 +51,15 @@ private:
     bool is_running_;
     int width_;
     int height_;
+
+    graphics::Renderer* renderer_;
     
     // Timing
     float last_frame_time_;
     float delta_time_;
     
     // UI state
-    bool show_demo_window_;
+    bool show_demo_;
     bool show_metrics_window_;
     float clear_color_[4];
     float ui_scale_;

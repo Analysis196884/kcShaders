@@ -2,6 +2,9 @@
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
+
+#include "graphics/renderer.h"
+
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 
@@ -10,21 +13,22 @@
 
 namespace gui {
 
-App::App(const std::string& title, int width, int height)
+App::App(const std::string& title)
     : window_(nullptr)
     , is_running_(false)
-    , width_(width)
-    , height_(height)
+    , width_(0)
+    , height_(0)
+    , renderer_(nullptr)
     , last_frame_time_(0.0f)
     , delta_time_(0.0f)
-    , show_demo_window_(true)
+    , show_demo_(false)
     , show_metrics_window_(false)
     , clear_color_{0.1f, 0.1f, 0.12f, 1.0f}
     , ui_scale_(1.0f)
     , regular_font_(nullptr)
     , mono_font_(nullptr)
 {
-    if (!Initialize(title, width, height)) {
+    if (!Initialize(title)) {
         throw std::runtime_error("Failed to initialize application");
     }
 }
@@ -34,7 +38,7 @@ App::~App()
     Shutdown();
 }
 
-bool App::Initialize(const std::string& title, int width, int height)
+bool App::Initialize(const std::string& title)
 {
     // Initialize GLFW
     if (!glfwInit()) {
@@ -46,13 +50,28 @@ bool App::Initialize(const std::string& title, int width, int height)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_MAXIMIZED, GLFW_TRUE);  // Start maximized
     
 #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
 
-    // Create window
-    window_ = glfwCreateWindow(width, height, title.c_str(), nullptr, nullptr);
+    // Get primary monitor's video mode for fullscreen dimensions
+    GLFWmonitor* primary_monitor = glfwGetPrimaryMonitor();
+    const GLFWvidmode* mode = glfwGetVideoMode(primary_monitor);
+    
+    if (mode) {
+        width_ = mode->width;
+        height_ = mode->height;
+        std::cout << "Primary monitor resolution: " << width_ << "x" << height_ << "\n";
+    } else {
+        // Fallback to default if can't get monitor info
+        width_ = 1920;
+        height_ = 1080;
+    }
+
+    // Create maximized windowed mode (not true fullscreen)
+    window_ = glfwCreateWindow(width_, height_, title.c_str(), nullptr, nullptr);
     if (!window_) {
         std::cerr << "Failed to create GLFW window with OpenGL 3.3, trying 3.0...\n";
         
@@ -61,7 +80,7 @@ bool App::Initialize(const std::string& title, int width, int height)
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_ANY_PROFILE);
         
-        window_ = glfwCreateWindow(width, height, title.c_str(), nullptr, nullptr);
+        window_ = glfwCreateWindow(width_, height_, title.c_str(), nullptr, nullptr);
         if (!window_) {
             std::cerr << "Failed to create GLFW window\n";
             glfwTerminate();
@@ -133,6 +152,13 @@ bool App::Initialize(const std::string& title, int width, int height)
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+    // Initialize renderer with window
+    renderer_ = new graphics::Renderer(window_, width_, height_);
+    if (!renderer_->initialize()) {
+        std::cerr << "Failed to initialize renderer\n";
+        return false;
+    }
+
     is_running_ = true;
     last_frame_time_ = static_cast<float>(glfwGetTime());
 
@@ -141,6 +167,11 @@ bool App::Initialize(const std::string& title, int width, int height)
 
 void App::Shutdown()
 {
+    if (renderer_) {
+        delete renderer_;
+        renderer_ = nullptr;
+    }
+    
     if (window_) {
         // Cleanup ImGui
         ImGui_ImplOpenGL3_Shutdown();
@@ -314,7 +345,7 @@ void App::Render()
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     // Render your 3D scene here
-    // ...
+    renderer_->present();
 
     // Render ImGui
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -365,7 +396,6 @@ void App::RenderUI()
         }
         
         if (ImGui::BeginMenu("View")) {
-            ImGui::MenuItem("Demo Window", nullptr, &show_demo_window_);
             ImGui::MenuItem("Metrics", nullptr, &show_metrics_window_);
             ImGui::EndMenu();
         }
@@ -381,11 +411,6 @@ void App::RenderUI()
     }
 
     ImGui::End();
-
-    // Show demo window
-    if (show_demo_window_) {
-        ImGui::ShowDemoWindow(&show_demo_window_);
-    }
 
     // Show metrics window
     if (show_metrics_window_) {
@@ -428,6 +453,28 @@ void App::RenderUI()
     
     ImGui::Separator();
     ImGui::TextWrapped("Full shader editor implementation coming soon...");
+    
+    ImGui::End();
+
+    // Viewport window - Display 3D scene from framebuffer
+    ImGui::Begin("Viewport");
+    
+    // Get available content region
+    ImVec2 viewport_size = ImGui::GetContentRegionAvail();
+    
+    // Resize framebuffer if needed
+    if (viewport_size.x > 0 && viewport_size.y > 0) {
+        int fb_w = renderer_->get_fb_width();
+        int fb_h = renderer_->get_fb_height();
+        
+        if (fb_w != (int)viewport_size.x || fb_h != (int)viewport_size.y) {
+            renderer_->resize_framebuffer((int)viewport_size.x, (int)viewport_size.y);
+        }
+        
+        // Display the framebuffer texture
+        GLuint texture_id = renderer_->get_framebuffer_texture();
+        ImGui::Image((void*)(intptr_t)texture_id, viewport_size, ImVec2(0, 1), ImVec2(1, 0));
+    }
     
     ImGui::End();
 
