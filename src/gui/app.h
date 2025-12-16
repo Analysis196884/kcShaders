@@ -2,12 +2,13 @@
 
 #include <string>
 #include "imgui.h"
+#include <ctime>
 
 // Forward declarations
 struct GLFWwindow;
 namespace graphics { class Renderer; }
 
-namespace gui {
+namespace kcShaders {
 
 class App {
 public:
@@ -33,6 +34,10 @@ private:
     void Shutdown();
     void SetUIScaleFromSystemDPI();
     void PrepareImGuiFonts();
+    void LoadConfig();
+    void SaveConfig();
+    void CheckShaderFileChanges();
+    time_t GetFileModTime(const std::string& path);
     
     void ProcessEvents();
     void Update(float delta_time);
@@ -63,6 +68,14 @@ private:
     bool show_metrics_window_;
     float clear_color_[4];
     float ui_scale_;
+    
+    // Shader paths
+    char vertex_shader_path_[256];
+    char fragment_shader_path_[256];
+    // Shader file watch
+    time_t last_vertex_mod_time_;
+    time_t last_fragment_mod_time_;
+    float shader_check_timer_;
     
     // Fonts
     ImFont* regular_font_;

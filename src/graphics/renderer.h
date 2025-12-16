@@ -46,6 +46,7 @@ class Renderer {
     GLuint shader_program_;
     GLuint vao_;
     GLuint vbo_;
+    int vertex_count_;
     
     // Framebuffer objects
     GLuint fbo_;
@@ -53,6 +54,8 @@ class Renderer {
     GLuint rbo_;
     int fb_width_;
     int fb_height_;
+
+    bool shadertoy_mode_ = true; // Enable shadertoy-like uniforms by default
 };
 
 } // namespace graphics

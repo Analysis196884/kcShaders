@@ -18,6 +18,7 @@ Renderer::Renderer(GLFWwindow* window, int width, int height)
     , rbo_(0)
     , fb_width_(800)
     , fb_height_(600)
+    , vertex_count_(0)
 {
 }
 
@@ -49,16 +50,12 @@ bool Renderer::initialize()
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
 
-    // Load shaders
-    if (!use_shader("../../../src/shaders/test.vert", "../../../src/shaders/test.frag")) {
-        std::cerr << "Failed to load shaders\n";
-        return false;
-    }
+    // Calculate vertex count (number of vertices = total floats / components per vertex)
+    vertex_count_ = static_cast<int>(sizeof(vertices) / (3 * sizeof(float)));
     
     // Create framebuffer
     create_framebuffer();
 
-    std::cout << "Renderer initialized successfully\n";
     return true;
 }
 
@@ -66,15 +63,18 @@ void Renderer::shutdown()
 {
     delete_framebuffer();
     
-    if (vbo_ > 0) {
+    if (vbo_ > 0) 
+    {
         glDeleteBuffers(1, &vbo_);
         vbo_ = 0;
     }
-    if (vao_ > 0) {
+    if (vao_ > 0) 
+    {
         glDeleteVertexArrays(1, &vao_);
         vao_ = 0;
     }
-    if (shader_program_ > 0) {
+    if (shader_program_ > 0) 
+    {
         glDeleteProgram(shader_program_);
         shader_program_ = 0;
     }
@@ -99,8 +99,37 @@ void Renderer::render_to_framebuffer()
     // Render scene
     if (shader_program_ > 0 && vao_ > 0) {
         glUseProgram(shader_program_);
+        // Provide shadertoy-like uniforms if enabled and present in shader
+        if (shadertoy_mode_) 
+        {
+            // iResolution (vec3)
+            GLint locRes = glGetUniformLocation(shader_program_, "iResolution");
+            if (locRes >= 0) {
+                glUniform3f(static_cast<GLint>(locRes), (float)fb_width_, (float)fb_height_, 1.0f);
+            }
+
+            // iTime (float)
+            GLint locTime = glGetUniformLocation(shader_program_, "iTime");
+            if (locTime >= 0) 
+            {
+                float t = static_cast<float>(glfwGetTime());
+                glUniform1f(locTime, t);
+            }
+
+            // iMouse (vec4) - x,y,current click x,y (simple mapping: z/w = 0)
+            GLint locMouse = glGetUniformLocation(shader_program_, "iMouse");
+            if (locMouse >= 0) 
+            {
+                double mx, my;
+                glfwGetCursorPos(window_, &mx, &my);
+                // Convert to pixels and invert Y to match shadertoy's origin (bottom-left)
+                float mouse_x = static_cast<float>(mx);
+                float mouse_y = static_cast<float>(fb_height_) - static_cast<float>(my);
+                glUniform4f(locMouse, mouse_x, mouse_y, 0.0f, 0.0f);
+            }
+        }
         glBindVertexArray(vao_);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glDrawArrays(GL_TRIANGLES, 0, vertex_count_);
         glBindVertexArray(0);
     }
     
@@ -116,12 +145,38 @@ void Renderer::present()
 
 bool Renderer::use_shader(const std::string& vertex_path, const std::string& fragment_path)
 {
-    std::string vertex_code = load_shader_source(vertex_path);
-    std::string fragment_code = load_shader_source(fragment_path);
+    std::string vertex_code;
+    std::string fragment_code;
 
-    if (vertex_code.empty() || fragment_code.empty()) {
-        std::cerr << "Failed to load shader source files.\n";
+    // Load fragment shader if provided
+    if (!fragment_path.empty()) {
+        fragment_code = load_shader_source(fragment_path);
+        if (fragment_code.empty()) {
+            std::cerr << "Failed to load fragment shader source file: " << fragment_path << "\n";
+            return false;
+        }
+    } else {
+        std::cerr << "No fragment shader provided\n";
         return false;
+    }
+
+    // Load vertex shader if provided, otherwise use a built-in fullscreen passthrough
+    if (!vertex_path.empty()) {
+        vertex_code = load_shader_source(vertex_path);
+        if (vertex_code.empty()) {
+            std::cerr << "Failed to load vertex shader source file: " << vertex_path << "\n";
+            return false;
+        }
+    } else {
+        // Default fullscreen triangle vertex shader that provides UV coordinates
+        vertex_code = R"GLSL(#version 330 core
+layout (location = 0) in vec3 aPos;
+out vec2 uv;
+void main() {
+    uv = (aPos.xy + vec2(1.0)) * 0.5;
+    gl_Position = vec4(aPos, 1.0);
+}
+)GLSL";
     }
 
     GLuint vertex_shader = compile_shader(GL_VERTEX_SHADER, vertex_code.c_str());
@@ -220,8 +275,6 @@ void Renderer::create_framebuffer()
     }
     
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    
-    std::cout << "Framebuffer created: " << fb_width_ << "x" << fb_height_ << std::endl;
 }
 
 void Renderer::delete_framebuffer()

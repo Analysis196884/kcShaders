@@ -59,6 +59,17 @@ else()
     message(WARNING "ImGui submodule not found. Run 'git submodule update --init --recursive'")
 endif()
 
+# OpenUSD submodule support
+set(OPENUSD_DIR ${CMAKE_SOURCE_DIR}/external/openusd)
+if(EXISTS "${OPENUSD_DIR}/CMakeLists.txt")
+    message(STATUS "OpenUSD submodule found at ${OPENUSD_DIR} - including in build")
+    # add_subdirectory(${OPENUSD_DIR} EXCLUDE_FROM_ALL)
+else()
+    message(STATUS "OpenUSD not found. To add it as a submodule run:")
+    message(STATUS "  git submodule add https://github.com/PixarAnimationStudios/USD.git external/openusd")
+    message(STATUS "  git submodule update --init --recursive")
+endif()
+
 # Create executable
 add_executable(kcShaders ${SOURCES} ${HEADERS})
 

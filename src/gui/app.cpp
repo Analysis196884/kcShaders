@@ -9,9 +9,13 @@
 #include <imgui_impl_opengl3.h>
 
 #include <iostream>
+#include <fstream>
 #include <stdexcept>
+#include <cstring>
+#include <ctime>
+#include <sys/stat.h>
 
-namespace gui {
+namespace kcShaders {
 
 App::App(const std::string& title)
     : window_(nullptr)
@@ -25,9 +29,15 @@ App::App(const std::string& title)
     , show_metrics_window_(false)
     , clear_color_{0.1f, 0.1f, 0.12f, 1.0f}
     , ui_scale_(1.0f)
+    , last_vertex_mod_time_(0)
+    , last_fragment_mod_time_(0)
+    , shader_check_timer_(0.0f)
     , regular_font_(nullptr)
     , mono_font_(nullptr)
-{
+{   
+    // Load config (will override defaults if file exists)
+    LoadConfig();
+    
     if (!Initialize(title)) {
         throw std::runtime_error("Failed to initialize application");
     }
@@ -63,7 +73,6 @@ bool App::Initialize(const std::string& title)
     if (mode) {
         width_ = mode->width;
         height_ = mode->height;
-        std::cout << "Primary monitor resolution: " << width_ << "x" << height_ << "\n";
     } else {
         // Fallback to default if can't get monitor info
         width_ = 1920;
@@ -167,6 +176,9 @@ bool App::Initialize(const std::string& title)
 
 void App::Shutdown()
 {
+    // Save config before cleanup
+    SaveConfig();
+    
     if (renderer_) {
         delete renderer_;
         renderer_ = nullptr;
@@ -204,8 +216,6 @@ void App::SetUIScaleFromSystemDPI()
     // Clamp the scale to reasonable values (between 1.0 and 3.0)
     if (ui_scale_ < 1.0f) ui_scale_ = 1.0f;
     if (ui_scale_ > 3.0f) ui_scale_ = 3.0f;
-    
-    std::cout << "System DPI Scale: " << ui_scale_ << "x\n";
 }
 
 void App::PrepareImGuiFonts()
@@ -223,8 +233,6 @@ void App::PrepareImGuiFonts()
     float coord_scale_x = static_cast<float>(fb_width) / static_cast<float>(win_width);
     float coord_scale_y = static_cast<float>(fb_height) / static_cast<float>(win_height);
     float rasterizer_density = std::max(coord_scale_x, coord_scale_y);
-    
-    std::cout << "Font Rasterizer Density: " << rasterizer_density << "x\n";
     
     // Clear existing fonts
     io.Fonts->Clear();
@@ -289,16 +297,12 @@ void App::PrepareImGuiFonts()
     }
     
     // Final fallback for mono font
-    if (!mono_font_) {
+    if (!mono_font_) 
+    {
         std::cout << "Monospace fonts not found, using default\n";
         mono_config.SizePixels = 16.0f * ui_scale_;
         mono_font_ = io.Fonts->AddFontDefault(&mono_config);
     }
-    
-    std::cout << "Fonts loaded - Regular: " << (regular_font_ ? "OK" : "FAILED") 
-              << ", Mono: " << (mono_font_ ? "OK" : "FAILED") << "\n";
-    std::cout << "Font sizes: " << (18.0f * ui_scale_) << "px regular, " 
-              << (16.0f * ui_scale_) << "px mono\n";
 }
 
 void App::Run() 
@@ -323,6 +327,13 @@ void App::ProcessEvents()
 
 void App::Update(float delta_time) 
 {
+    // Check shader file changes every 0.5 seconds
+    shader_check_timer_ += delta_time;
+    if (shader_check_timer_ >= 0.5f) {
+        shader_check_timer_ = 0.0f;
+        CheckShaderFileChanges();
+    }
+    
     // Start the Dear ImGui frame
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
@@ -423,17 +434,43 @@ void App::RenderUI()
     ImGui::Text("Application Info");
     ImGui::Separator();
     ImGui::Text("FPS: %.1f (%.3f ms/frame)", 1.0f / delta_time_, delta_time_ * 1000.0f);
-    ImGui::Text("Window Size: %dx%d", width_, height_);
-    
-    ImGui::Spacing();
-    ImGui::Text("Render Settings");
-    ImGui::Separator();
-    ImGui::ColorEdit3("Clear Color", clear_color_);
     
     ImGui::End();
 
     // Shader editor panel
     ImGui::Begin("Shader Editor");
+    
+    ImGui::Text("Shader Paths");
+    ImGui::Separator();
+    
+    // Vertex shader path input
+    ImGui::Text("Vertex Shader:");
+    ImGui::SameLine();
+    ImGui::InputText("##VertexShader", vertex_shader_path_, sizeof(vertex_shader_path_));
+    
+    // Fragment shader path input
+    ImGui::Text("Fragment Shader:");
+    ImGui::SameLine();
+    ImGui::InputText("##FragmentShader", fragment_shader_path_, sizeof(fragment_shader_path_));
+    
+    // Load/Reload shader button
+    if (ImGui::Button("Load Shaders", ImVec2(140, 0))) 
+    {
+        std::string vpath(vertex_shader_path_);
+        std::string fpath(fragment_shader_path_);
+        if (renderer_->use_shader(vpath, fpath)) {
+            std::cout << "Shaders loaded successfully:\n";
+            std::cout << "  Vertex: " << vpath << "\n";
+            std::cout << "  Fragment: " << fpath << "\n";
+        } else {
+            // std::cerr << "Failed to load shaders" << std::endl;
+        }
+    }
+    
+    ImGui::Separator();
+    
+    // Preview shader code
+    ImGui::Text("Shader Preview (example)");
     
     // Use mono font for shader code
     if (mono_font_) {
@@ -450,9 +487,6 @@ void App::RenderUI()
     if (mono_font_) {
         ImGui::PopFont();
     }
-    
-    ImGui::Separator();
-    ImGui::TextWrapped("Full shader editor implementation coming soon...");
     
     ImGui::End();
 
@@ -521,4 +555,90 @@ void App::CursorPosCallback(GLFWwindow* window, double xpos, double ypos)
     // Handle cursor position events
 }
 
-} // namespace gui
+void App::LoadConfig()
+{
+    std::ifstream config_file("shader_config.ini");
+    if (config_file.is_open()) {
+        std::string line;
+        while (std::getline(config_file, line)) 
+        {
+            if (line.find("vertex_shader=") == 0) 
+            {
+                std::string path = line.substr(14);
+                if (!path.empty() && path.length() < sizeof(vertex_shader_path_)) {
+                    strcpy_s(vertex_shader_path_, sizeof(vertex_shader_path_), path.c_str());
+                }
+            } else if (line.find("fragment_shader=") == 0) 
+            {
+                std::string path = line.substr(16);
+                if (!path.empty() && path.length() < sizeof(fragment_shader_path_)) {
+                    strcpy_s(fragment_shader_path_, sizeof(fragment_shader_path_), path.c_str());
+                }
+            }
+        }
+        config_file.close();
+    } else {
+        // std::cout << "No shader config file found, using defaults\n";
+    }
+}
+
+void App::SaveConfig()
+{
+    std::ofstream config_file("shader_config.ini");
+    if (config_file.is_open()) {
+        config_file << "vertex_shader=" << vertex_shader_path_ << "\n";
+        config_file << "fragment_shader=" << fragment_shader_path_ << "\n";
+        config_file.close();
+    }
+}
+
+std::time_t App::GetFileModTime(const std::string& path)
+{
+    struct stat file_stat;
+    if (stat(path.c_str(), &file_stat) == 0) {
+        return file_stat.st_mtime;
+    }
+    return 0;
+}
+
+void App::CheckShaderFileChanges()
+{
+    if (!renderer_) return;
+    
+    std::string vertex_path(vertex_shader_path_);
+    std::string fragment_path(fragment_shader_path_);
+    // If both paths are empty, nothing to watch
+    if (vertex_path.empty() && fragment_path.empty()) {
+        return;
+    }
+
+    std::time_t vertex_mod = vertex_path.empty() ? 0 : GetFileModTime(vertex_path);
+    std::time_t fragment_mod = fragment_path.empty() ? 0 : GetFileModTime(fragment_path);
+
+    bool vertex_changed = (!vertex_path.empty() && vertex_mod != 0 && vertex_mod != last_vertex_mod_time_);
+    bool fragment_changed = (!fragment_path.empty() && fragment_mod != 0 && fragment_mod != last_fragment_mod_time_);
+
+    // Initialize on first check for provided paths
+    if (( !vertex_path.empty() && last_vertex_mod_time_ == 0) || ( !fragment_path.empty() && last_fragment_mod_time_ == 0)) 
+    {
+        if (!vertex_path.empty()) last_vertex_mod_time_ = vertex_mod;
+        if (!fragment_path.empty()) last_fragment_mod_time_ = fragment_mod;
+        return;
+    }
+
+    if (vertex_changed || fragment_changed) 
+    {
+        std::cout << "Shader file changed, reloading...\n";
+
+        if (renderer_->use_shader(vertex_path, fragment_path)) 
+        {
+            std::cout << "Shader reloaded successfully!\n";
+            if (vertex_changed) last_vertex_mod_time_ = vertex_mod;
+            if (fragment_changed) last_fragment_mod_time_ = fragment_mod;
+        } else {
+            std::cerr << "Failed to reload shader\n";
+        }
+    }
+}
+
+} // namespace kcShaders
