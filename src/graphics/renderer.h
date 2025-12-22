@@ -7,7 +7,8 @@
 #include <string>
 #include <memory>
 
-namespace graphics {
+namespace kcShaders {
+class Scene;
 
 class Renderer {
   public:
@@ -23,6 +24,7 @@ class Renderer {
     // Framebuffer methods
     void resize_framebuffer(int width, int height);
     void render_to_framebuffer();
+    void render_scene(Scene* scene);
     GLuint get_framebuffer_texture() const { return fbo_texture_; }
     int get_fb_width() const { return fb_width_; }
     int get_fb_height() const { return fb_height_; }

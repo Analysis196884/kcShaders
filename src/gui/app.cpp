@@ -4,6 +4,8 @@
 #include <GLFW/glfw3.h>
 
 #include "graphics/renderer.h"
+#include "scene/scene.h"
+#include "scene/demo_scene.h"
 
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
@@ -34,7 +36,12 @@ App::App(const std::string& title)
     , shader_check_timer_(0.0f)
     , regular_font_(nullptr)
     , mono_font_(nullptr)
+    , current_scene_(nullptr)
 {   
+    // Set default shader paths (will be overridden by config if it exists)
+    strcpy_s(vertex_shader_path_, sizeof(vertex_shader_path_), "../../../src/shaders/scene.vert");
+    strcpy_s(fragment_shader_path_, sizeof(fragment_shader_path_), "../../../src/shaders/scene.frag");
+    
     // Load config (will override defaults if file exists)
     LoadConfig();
     
@@ -162,11 +169,26 @@ bool App::Initialize(const std::string& title)
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     // Initialize renderer with window
-    renderer_ = new graphics::Renderer(window_, width_, height_);
+    // Explicitly use the global Renderer type to match the member declaration
+    renderer_ = new kcShaders::Renderer(window_, width_, height_);
     if (!renderer_->initialize()) {
         std::cerr << "Failed to initialize renderer\n";
         return false;
     }
+
+    // Load default shaders
+    std::string vpath(vertex_shader_path_);
+    std::string fpath(fragment_shader_path_);
+    if (!vpath.empty() && !fpath.empty()) {
+        if (renderer_->use_shader(vpath, fpath)) {
+            std::cout << "Default shaders loaded:\n";
+            std::cout << "  Vertex: " << vpath << "\n";
+            std::cout << "  Fragment: " << fpath << "\n";
+        }
+    }
+
+    // Load demo scene by default
+    LoadDemoScene();
 
     is_running_ = true;
     last_frame_time_ = static_cast<float>(glfwGetTime());
@@ -178,6 +200,9 @@ void App::Shutdown()
 {
     // Save config before cleanup
     SaveConfig();
+    
+    // Clean up scene
+    ClearScene();
     
     if (renderer_) {
         delete renderer_;
@@ -355,8 +380,12 @@ void App::Render()
     glClearColor(clear_color_[0], clear_color_[1], clear_color_[2], clear_color_[3]);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // Render your 3D scene here
-    renderer_->present();
+    // Render scene if available, otherwise render default fullscreen triangle
+    if (current_scene_) {
+        renderer_->render_scene(current_scene_);
+    } else {
+        renderer_->present();
+    }
 
     // Render ImGui
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -514,7 +543,72 @@ void App::RenderUI()
 
     // Scene hierarchy
     ImGui::Begin("Scene");
-    ImGui::Text("Scene hierarchy coming soon...");
+    
+    ImGui::Text("Scene Management");
+    ImGui::Separator();
+    
+    // Display current scene status
+    if (current_scene_) {
+        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Scene Loaded");
+        
+        // Count scene nodes
+        int root_count = static_cast<int>(current_scene_->roots.size());
+        ImGui::Text("Root Nodes: %d", root_count);
+        
+        // Collect render items to show mesh count
+        std::vector<RenderItem> items;
+        current_scene_->collectRenderItems(items);
+        ImGui::Text("Render Items: %d", static_cast<int>(items.size()));
+    } else {
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "No Scene Loaded");
+    }
+    
+    ImGui::Spacing();
+    ImGui::Separator();
+    
+    // Scene loading buttons
+    if (ImGui::Button("Load Demo Scene", ImVec2(150, 0))) {
+        LoadDemoScene();
+    }
+    
+    ImGui::SameLine();
+    
+    if (ImGui::Button("Clear Scene", ImVec2(150, 0))) {
+        ClearScene();
+    }
+    
+    ImGui::Spacing();
+    ImGui::Separator();
+    
+    // Scene hierarchy tree (if scene exists)
+    if (current_scene_) {
+        ImGui::Text("Hierarchy:");
+        for (size_t i = 0; i < current_scene_->roots.size(); ++i) {
+            const auto& root = current_scene_->roots[i];
+            ImGui::PushID(static_cast<int>(i));
+            
+            bool node_open = ImGui::TreeNode("Node", "Root Node %zu", i);
+            if (node_open) {
+                if (root->mesh) {
+                    ImGui::Text("  Mesh: %u indices", root->mesh->indexCount());
+                }
+                ImGui::Text("  Position: (%.2f, %.2f, %.2f)", 
+                    root->transform.position.x, 
+                    root->transform.position.y, 
+                    root->transform.position.z);
+                
+                // Show children count if any
+                if (!root->children.empty()) {
+                    ImGui::Text("  Children: %zu", root->children.size());
+                }
+                
+                ImGui::TreePop();
+            }
+            
+            ImGui::PopID();
+        }
+    }
+    
     ImGui::End();
 }
 
@@ -636,8 +730,24 @@ void App::CheckShaderFileChanges()
             if (vertex_changed) last_vertex_mod_time_ = vertex_mod;
             if (fragment_changed) last_fragment_mod_time_ = fragment_mod;
         } else {
-            std::cerr << "Failed to reload shader\n";
+            // std::cerr << "Failed to reload shader\n";
         }
+    }
+}
+
+void App::LoadDemoScene()
+{
+    ClearScene();
+    current_scene_ = create_demo_scene();
+    std::cout << "Demo scene loaded\n";
+}
+
+void App::ClearScene()
+{
+    if (current_scene_) {
+        delete current_scene_;
+        current_scene_ = nullptr;
+        std::cout << "Scene cleared\n";
     }
 }
 
