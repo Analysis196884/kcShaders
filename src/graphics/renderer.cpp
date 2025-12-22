@@ -1,10 +1,16 @@
 #include "renderer.h"
+#include "scene/scene.h"
+#include "scene/mesh.h"
 
 #include <fstream>
 #include <sstream>
 #include <iostream>
 
-namespace graphics {
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
+namespace kcShaders {
 
 Renderer::Renderer(GLFWwindow* window, int width, int height)
     : window_(window)
@@ -141,6 +147,65 @@ void Renderer::present()
 {
     // This method is kept for compatibility but rendering now happens in render_to_framebuffer
     render_to_framebuffer();
+}
+
+void Renderer::render_scene(Scene* scene)
+{
+    if (!scene || shader_program_ == 0) {
+        return;
+    }
+
+    // Bind framebuffer
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
+    glViewport(0, 0, fb_width_, fb_height_);
+    
+    // Clear framebuffer
+    glClearColor(0.1f, 0.1f, 0.12f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    
+    // Use the shader program
+    glUseProgram(shader_program_);
+    
+    // Collect all render items from the scene
+    std::vector<RenderItem> items;
+    scene->collectRenderItems(items);
+    
+    // Render each item
+    for (const auto& item : items) {
+        if (item.mesh && item.mesh->isUploaded()) {
+            // Set model matrix uniform
+            GLint locModel = glGetUniformLocation(shader_program_, "uModel");
+            if (locModel >= 0) {
+                glUniformMatrix4fv(locModel, 1, GL_FALSE, &item.modelMatrix[0][0]);
+            }
+            
+            // TODO: Set view and projection matrices
+            // For now, use simple orthographic view
+            GLint locView = glGetUniformLocation(shader_program_, "uView");
+            GLint locProj = glGetUniformLocation(shader_program_, "uProjection");
+            
+            if (locView >= 0) {
+                glm::mat4 view = glm::lookAt(
+                    glm::vec3(0.0f, 2.0f, 5.0f),
+                    glm::vec3(0.0f, 0.0f, 0.0f),
+                    glm::vec3(0.0f, 1.0f, 0.0f)
+                );
+                glUniformMatrix4fv(locView, 1, GL_FALSE, &view[0][0]);
+            }
+            
+            if (locProj >= 0) {
+                float aspect = static_cast<float>(fb_width_) / static_cast<float>(fb_height_);
+                glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
+                glUniformMatrix4fv(locProj, 1, GL_FALSE, &proj[0][0]);
+            }
+            
+            // Draw the mesh
+            item.mesh->draw();
+        }
+    }
+    
+    // Unbind framebuffer
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 bool Renderer::use_shader(const std::string& vertex_path, const std::string& fragment_path)
@@ -303,4 +368,4 @@ void Renderer::resize_framebuffer(int width, int height)
     create_framebuffer();
 }
 
-} // namespace graphics
+} // namespace kcShaders

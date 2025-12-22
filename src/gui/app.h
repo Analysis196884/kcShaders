@@ -6,9 +6,11 @@
 
 // Forward declarations
 struct GLFWwindow;
-namespace graphics { class Renderer; }
 
 namespace kcShaders {
+
+class Scene;
+class Renderer;
 
 class App {
 public:
@@ -39,6 +41,10 @@ private:
     void CheckShaderFileChanges();
     time_t GetFileModTime(const std::string& path);
     
+    // Scene management
+    void LoadDemoScene();
+    void ClearScene();
+    
     void ProcessEvents();
     void Update(float delta_time);
     void Render();
@@ -57,7 +63,7 @@ private:
     int width_;
     int height_;
 
-    graphics::Renderer* renderer_;
+    kcShaders::Renderer* renderer_;
     
     // Timing
     float last_frame_time_;
@@ -80,6 +86,9 @@ private:
     // Fonts
     ImFont* regular_font_;
     ImFont* mono_font_;
+    
+    // Scene
+    Scene* current_scene_;
 };
 
-}  // namespace gui
+}  // namespace kcShaders
