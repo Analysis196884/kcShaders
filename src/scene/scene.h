@@ -12,6 +12,7 @@ namespace kcShaders {
 // Forward declarations
 class Mesh;
 class Material;
+class Light;
 
 // ================= Transform =================
 struct Transform {
@@ -41,6 +42,7 @@ public:
 
     Mesh* mesh = nullptr; // nullptr if not renderable
     Material* material = nullptr; // nullptr allowed (use default)
+    std::string name = "SceneNode";
 
     SceneNode* parent = nullptr;
     std::vector<std::unique_ptr<SceneNode>> children;
@@ -62,8 +64,11 @@ public:
     ~Scene();
     
     std::vector<std::unique_ptr<SceneNode>> roots;
+    std::vector<Light*> lights;  // Lights in the scene
 
     SceneNode* createRoot();
+    void addLight(Light* light);
+    void removeLight(Light* light);
 
     void collectRenderItems(std::vector<RenderItem>& out) const;
 };

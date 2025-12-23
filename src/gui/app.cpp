@@ -195,7 +195,7 @@ bool App::Initialize(const std::string& title)
     int fb_h = renderer_->get_fb_height();
     float aspect_ratio = static_cast<float>(fb_w) / static_cast<float>(fb_h);
     camera_ = new Camera(45.0f, aspect_ratio, 0.1f, 100.0f);
-    camera_->SetPosition(glm::vec3(0.0f, 2.0f, 5.0f));
+    camera_->SetPosition(glm::vec3(0.0f, 0.0f, 5.0f));
     camera_->SetTarget(glm::vec3(0.0f, 0.0f, 0.0f));
 
     is_running_ = true;
@@ -668,6 +668,57 @@ void App::RenderUI()
             }
             
             ImGui::PopID();
+        }
+        
+        // Lights section
+        if (!current_scene_->lights.empty()) {
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Text("Lights (%zu):", current_scene_->lights.size());
+            
+            for (size_t i = 0; i < current_scene_->lights.size(); ++i) {
+                Light* light = current_scene_->lights[i];
+                ImGui::PushID(1000 + static_cast<int>(i));
+                
+                // Get light type name
+                const char* typeName = "Unknown";
+                switch (light->GetType()) {
+                    case LightType::Directional: typeName = "Directional"; break;
+                    case LightType::Point: typeName = "Point"; break;
+                    case LightType::Spot: typeName = "Spot"; break;
+                    case LightType::Area: typeName = "Area"; break;
+                    case LightType::Ambient: typeName = "Ambient"; break;
+                }
+                
+                bool light_open = ImGui::TreeNode("Light", "%s: %s", typeName, light->name.c_str());
+                if (light_open) {
+                    ImGui::Checkbox("Enabled", &light->enabled);
+                    ImGui::ColorEdit3("Color", &light->color[0], ImGuiColorEditFlags_NoInputs);
+                    ImGui::SliderFloat("Intensity", &light->intensity, 0.0f, 5.0f);
+                    
+                    // Type-specific properties
+                    if (light->GetType() == LightType::Point) {
+                        PointLight* plight = static_cast<PointLight*>(light);
+                        ImGui::Text("Position: (%.1f, %.1f, %.1f)", 
+                            plight->position.x, plight->position.y, plight->position.z);
+                        ImGui::Text("Radius: %.1f", plight->radius);
+                    } else if (light->GetType() == LightType::Directional) {
+                        DirectionalLight* dlight = static_cast<DirectionalLight*>(light);
+                        ImGui::Text("Direction: (%.2f, %.2f, %.2f)", 
+                            dlight->direction.x, dlight->direction.y, dlight->direction.z);
+                    } else if (light->GetType() == LightType::Spot) {
+                        SpotLight* slight = static_cast<SpotLight*>(light);
+                        ImGui::Text("Position: (%.1f, %.1f, %.1f)", 
+                            slight->position.x, slight->position.y, slight->position.z);
+                        ImGui::Text("Inner/Outer Angle: %.1f°/%.1f°", 
+                            slight->innerConeAngle, slight->outerConeAngle);
+                    }
+                    
+                    ImGui::TreePop();
+                }
+                
+                ImGui::PopID();
+            }
         }
     }
     

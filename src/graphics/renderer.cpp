@@ -3,6 +3,7 @@
 #include "scene/mesh.h"
 #include "scene/camera.h"
 #include "scene/material.h"
+#include "scene/light.h"
 
 #include <fstream>
 #include <sstream>
@@ -182,6 +183,133 @@ void Renderer::render_scene(Scene* scene, Camera* camera)
         glm::vec3 camPos = camera->GetPosition();
         glUniform3fv(locViewPos, 1, &camPos[0]);
     }
+    
+    // Set up lighting uniforms
+    int numDirLights = 0;
+    int numPointLights = 0;
+    int numSpotLights = 0;
+    glm::vec3 ambientLight(0.0f);
+    
+    // Process all lights in the scene
+    for (size_t i = 0; i < scene->lights.size(); ++i) {
+        Light* light = scene->lights[i];
+        if (!light || !light->enabled) continue;
+        
+        switch (light->GetType()) {
+            case LightType::Directional: {
+                if (numDirLights >= 4) break; // MAX_DIR_LIGHTS = 4
+                DirectionalLight* dirLight = static_cast<DirectionalLight*>(light);
+                
+                std::string baseName = "dirLights[" + std::to_string(numDirLights) + "]";
+                GLint loc;
+                
+                loc = glGetUniformLocation(shader_program_, (baseName + ".direction").c_str());
+                if (loc >= 0) glUniform3fv(loc, 1, &dirLight->direction[0]);
+                
+                loc = glGetUniformLocation(shader_program_, (baseName + ".color").c_str());
+                if (loc >= 0) glUniform3fv(loc, 1, &dirLight->color[0]);
+                
+                loc = glGetUniformLocation(shader_program_, (baseName + ".intensity").c_str());
+                if (loc >= 0) glUniform1f(loc, dirLight->intensity);
+                
+                numDirLights++;
+                break;
+            }
+            
+            case LightType::Point: {
+                if (numPointLights >= 8) break; // MAX_POINT_LIGHTS = 8
+                PointLight* pointLight = static_cast<PointLight*>(light);
+                
+                std::string baseName = "pointLights[" + std::to_string(numPointLights) + "]";
+                GLint loc;
+                
+                loc = glGetUniformLocation(shader_program_, (baseName + ".position").c_str());
+                if (loc >= 0) glUniform3fv(loc, 1, &pointLight->position[0]);
+                
+                loc = glGetUniformLocation(shader_program_, (baseName + ".color").c_str());
+                if (loc >= 0) glUniform3fv(loc, 1, &pointLight->color[0]);
+                
+                loc = glGetUniformLocation(shader_program_, (baseName + ".intensity").c_str());
+                if (loc >= 0) glUniform1f(loc, pointLight->intensity);
+                
+                loc = glGetUniformLocation(shader_program_, (baseName + ".constant").c_str());
+                if (loc >= 0) glUniform1f(loc, pointLight->constant);
+                
+                loc = glGetUniformLocation(shader_program_, (baseName + ".linear").c_str());
+                if (loc >= 0) glUniform1f(loc, pointLight->linear);
+                
+                loc = glGetUniformLocation(shader_program_, (baseName + ".quadratic").c_str());
+                if (loc >= 0) glUniform1f(loc, pointLight->quadratic);
+                
+                loc = glGetUniformLocation(shader_program_, (baseName + ".radius").c_str());
+                if (loc >= 0) glUniform1f(loc, pointLight->radius);
+                
+                numPointLights++;
+                break;
+            }
+            
+            case LightType::Spot: {
+                if (numSpotLights >= 4) break; // MAX_SPOT_LIGHTS = 4
+                SpotLight* spotLight = static_cast<SpotLight*>(light);
+                
+                std::string baseName = "spotLights[" + std::to_string(numSpotLights) + "]";
+                GLint loc;
+                
+                loc = glGetUniformLocation(shader_program_, (baseName + ".position").c_str());
+                if (loc >= 0) glUniform3fv(loc, 1, &spotLight->position[0]);
+                
+                loc = glGetUniformLocation(shader_program_, (baseName + ".direction").c_str());
+                if (loc >= 0) glUniform3fv(loc, 1, &spotLight->direction[0]);
+                
+                loc = glGetUniformLocation(shader_program_, (baseName + ".color").c_str());
+                if (loc >= 0) glUniform3fv(loc, 1, &spotLight->color[0]);
+                
+                loc = glGetUniformLocation(shader_program_, (baseName + ".intensity").c_str());
+                if (loc >= 0) glUniform1f(loc, spotLight->intensity);
+                
+                loc = glGetUniformLocation(shader_program_, (baseName + ".innerConeAngle").c_str());
+                if (loc >= 0) glUniform1f(loc, spotLight->innerConeAngle);
+                
+                loc = glGetUniformLocation(shader_program_, (baseName + ".outerConeAngle").c_str());
+                if (loc >= 0) glUniform1f(loc, spotLight->outerConeAngle);
+                
+                loc = glGetUniformLocation(shader_program_, (baseName + ".constant").c_str());
+                if (loc >= 0) glUniform1f(loc, spotLight->constant);
+                
+                loc = glGetUniformLocation(shader_program_, (baseName + ".linear").c_str());
+                if (loc >= 0) glUniform1f(loc, spotLight->linear);
+                
+                loc = glGetUniformLocation(shader_program_, (baseName + ".quadratic").c_str());
+                if (loc >= 0) glUniform1f(loc, spotLight->quadratic);
+                
+                numSpotLights++;
+                break;
+            }
+            
+            case LightType::Ambient: {
+                AmbientLight* ambLight = static_cast<AmbientLight*>(light);
+                ambientLight += ambLight->color * ambLight->intensity;
+                break;
+            }
+            
+            default:
+                break;
+        }
+    }
+    
+    // Set light counts
+    GLint locNumDirLights = glGetUniformLocation(shader_program_, "numDirLights");
+    if (locNumDirLights >= 0) glUniform1i(locNumDirLights, numDirLights);
+    
+    GLint locNumPointLights = glGetUniformLocation(shader_program_, "numPointLights");
+    if (locNumPointLights >= 0) glUniform1i(locNumPointLights, numPointLights);
+    
+    GLint locNumSpotLights = glGetUniformLocation(shader_program_, "numSpotLights");
+    if (locNumSpotLights >= 0) glUniform1i(locNumSpotLights, numSpotLights);
+    
+    // Set ambient light
+    GLint locAmbientLight = glGetUniformLocation(shader_program_, "ambientLight");
+    if (locAmbientLight >= 0) glUniform3fv(locAmbientLight, 1, &ambientLight[0]);
     
     // Collect all render items from the scene
     std::vector<RenderItem> items;

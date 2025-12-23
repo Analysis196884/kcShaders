@@ -17,12 +17,52 @@ struct Material {
     float opacity;
 };
 
-uniform Material material;
+// Light structure definitions
+struct DirectionalLight {
+    vec3 direction;
+    vec3 color;
+    float intensity;
+};
 
-// Light properties
-uniform vec3 lightPos = vec3(0.0, 0.0, 2.0);
-uniform vec3 lightColor = vec3(1.0, 1.0, 1.0);
+struct PointLight {
+    vec3 position;
+    vec3 color;
+    float intensity;
+    float constant;
+    float linear;
+    float quadratic;
+    float radius;
+};
+
+struct SpotLight {
+    vec3 position;
+    vec3 direction;
+    vec3 color;
+    float intensity;
+    float innerConeAngle;
+    float outerConeAngle;
+    float constant;
+    float linear;
+    float quadratic;
+};
+
+uniform Material material;
 uniform vec3 viewPos;
+
+// Light arrays
+#define MAX_DIR_LIGHTS 4
+#define MAX_POINT_LIGHTS 8
+#define MAX_SPOT_LIGHTS 4
+
+uniform int numDirLights;
+uniform int numPointLights;
+uniform int numSpotLights;
+
+uniform DirectionalLight dirLights[MAX_DIR_LIGHTS];
+uniform PointLight pointLights[MAX_POINT_LIGHTS];
+uniform SpotLight spotLights[MAX_SPOT_LIGHTS];
+
+uniform vec3 ambientLight;
 
 const float PI = 3.14159265359;
 
@@ -69,21 +109,10 @@ float geometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
     return ggx1 * ggx2;
 }
 
-void main()
+// Calculate lighting contribution for a single light
+vec3 calculateLighting(vec3 L, vec3 radiance, vec3 N, vec3 V, vec3 F0)
 {
-    vec3 N = normalize(Normal);
-    vec3 V = normalize(viewPos - FragPos);
-    
-    // Calculate reflectance at normal incidence
-    vec3 F0 = vec3(0.04); 
-    F0 = mix(F0, material.albedo, material.metallic);
-    
-    // Light calculation
-    vec3 L = normalize(lightPos - FragPos);
     vec3 H = normalize(V + L);
-    float dist = length(lightPos - FragPos);
-    float attenuation = 1.0 / (1.0 + 0.01 * dist * dist);
-    vec3 radiance = lightColor * attenuation;
     
     // Cook-Torrance BRDF
     float NDF = distributionGGX(N, H, material.roughness);
@@ -100,10 +129,88 @@ void main()
     kD *= 1.0 - material.metallic;
     
     float NdotL = max(dot(N, L), 0.0);
-    vec3 Lo = (kD * material.albedo / PI + specular) * radiance * NdotL;
+    return (kD * material.albedo / PI + specular) * radiance * NdotL;
+}
+
+// Calculate directional light contribution
+vec3 calcDirectionalLight(DirectionalLight light, vec3 N, vec3 V, vec3 F0)
+{
+    vec3 L = normalize(-light.direction);
+    vec3 radiance = light.color * light.intensity;
+    return calculateLighting(L, radiance, N, V, F0);
+}
+
+// Calculate point light contribution
+vec3 calcPointLight(PointLight light, vec3 N, vec3 V, vec3 F0)
+{
+    vec3 L = normalize(light.position - FragPos);
+    float dist = length(light.position - FragPos);
     
-    // Ambient lighting (simple approximation)
-    vec3 ambient = vec3(0.03) * material.albedo * material.ao;
+    // Distance attenuation
+    float attenuation = 1.0 / (light.constant + light.linear * dist + light.quadratic * dist * dist);
+    
+    // Radius cutoff for smooth falloff
+    if (light.radius > 0.0) {
+        float smoothFactor = 1.0 - smoothstep(light.radius * 0.8, light.radius, dist);
+        attenuation *= smoothFactor;
+    }
+    
+    vec3 radiance = light.color * light.intensity * attenuation;
+    return calculateLighting(L, radiance, N, V, F0);
+}
+
+// Calculate spot light contribution
+vec3 calcSpotLight(SpotLight light, vec3 N, vec3 V, vec3 F0)
+{
+    vec3 L = normalize(light.position - FragPos);
+    float dist = length(light.position - FragPos);
+    
+    // Distance attenuation
+    float attenuation = 1.0 / (light.constant + light.linear * dist + light.quadratic * dist * dist);
+    
+    // Spot cone attenuation
+    vec3 lightDir = normalize(light.direction);
+    float theta = dot(L, -lightDir);
+    float innerCos = cos(radians(light.innerConeAngle));
+    float outerCos = cos(radians(light.outerConeAngle));
+    float epsilon = innerCos - outerCos;
+    float spotIntensity = clamp((theta - outerCos) / epsilon, 0.0, 1.0);
+    
+    attenuation *= spotIntensity;
+    
+    vec3 radiance = light.color * light.intensity * attenuation;
+    return calculateLighting(L, radiance, N, V, F0);
+}
+
+void main()
+{
+    vec3 N = normalize(Normal);
+    vec3 V = normalize(viewPos - FragPos);
+    
+    // Calculate reflectance at normal incidence
+    vec3 F0 = vec3(0.04); 
+    F0 = mix(F0, material.albedo, material.metallic);
+    
+    // Accumulate lighting from all sources
+    vec3 Lo = vec3(0.0);
+    
+    // Directional lights
+    for (int i = 0; i < numDirLights && i < MAX_DIR_LIGHTS; i++) {
+        Lo += calcDirectionalLight(dirLights[i], N, V, F0);
+    }
+    
+    // Point lights
+    for (int i = 0; i < numPointLights && i < MAX_POINT_LIGHTS; i++) {
+        Lo += calcPointLight(pointLights[i], N, V, F0);
+    }
+    
+    // Spot lights
+    for (int i = 0; i < numSpotLights && i < MAX_SPOT_LIGHTS; i++) {
+        Lo += calcSpotLight(spotLights[i], N, V, F0);
+    }
+    
+    // Ambient lighting
+    vec3 ambient = ambientLight * material.albedo * material.ao;
     
     // Emissive
     vec3 emissive = material.emissive * material.emissiveStrength;

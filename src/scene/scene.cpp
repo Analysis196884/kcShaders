@@ -1,8 +1,10 @@
 #include "scene.h"
 #include "mesh.h"
 #include "material.h"
+#include "light.h"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <algorithm>
 
 namespace kcShaders {
 
@@ -69,6 +71,12 @@ void SceneNode::collectRenderItems(std::vector<RenderItem>& out) const
 
 Scene::~Scene()
 {
+    // Clean up lights
+    for (Light* light : lights) {
+        delete light;
+    }
+    lights.clear();
+    
     // unique_ptr will automatically clean up SceneNodes
     // SceneNode destructor will clean up meshes and materials
 }
@@ -79,6 +87,21 @@ SceneNode* Scene::createRoot()
     return roots.back().get();
 }
 
+void Scene::addLight(Light* light)
+{
+    if (light) {
+        lights.push_back(light);
+    }
+}
+
+void Scene::removeLight(Light* light)
+{
+    auto it = std::find(lights.begin(), lights.end(), light);
+    if (it != lights.end()) {
+        delete *it;
+        lights.erase(it);
+    }
+}
 
 void Scene::collectRenderItems(std::vector<RenderItem>& out) const 
 {
