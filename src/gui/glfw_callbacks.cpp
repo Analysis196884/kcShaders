@@ -1,27 +1,16 @@
 #include "glfw_callbacks.h"
+#include "app.h"
+#include "scene/camera.h"
 
 namespace kcShaders {
 
-void wasd_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
+void escape_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
-    // Example WASD key handling
-    if (action == GLFW_PRESS || action == GLFW_REPEAT) 
-    {
-        switch (key) {
-            case GLFW_KEY_W:
-                // Move forward
-                break;
-            case GLFW_KEY_A:
-                // Move left
-                break;
-            case GLFW_KEY_S:
-                // Move backward
-                break;
-            case GLFW_KEY_D:
-                // Move right
-                break;
-            default:
-                break;
+    App* app = static_cast<App*>(glfwGetWindowUserPointer(window));
+    if (app && action == GLFW_PRESS) {
+        // Handle key presses
+        if (key == GLFW_KEY_ESCAPE) {
+            app->Stop();
         }
     }
 }

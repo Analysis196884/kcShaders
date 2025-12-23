@@ -53,15 +53,7 @@ void Camera::ProcessMouseMovement(float xoffset, float yoffset)
     const float sensitivity = 0.1f;
     xoffset *= sensitivity;
     yoffset *= sensitivity;
-
-    yaw_ += xoffset;
-    pitch_ += yoffset;
-
-    // Constrain pitch
-    if (pitch_ > 89.0f) pitch_ = 89.0f;
-    if (pitch_ < -89.0f) pitch_ = -89.0f;
-
-    UpdateCameraVectors();
+    RotateView(xoffset, yoffset);
 }
 
 void Camera::ProcessMouseScroll(float yoffset)
@@ -79,6 +71,55 @@ void Camera::UpdateCameraVectors()
     front.z = sin(glm::radians(yaw_)) * cos(glm::radians(pitch_));
     front_ = glm::normalize(front);
     right_ = glm::normalize(glm::cross(front_, up_));
+}
+
+void Camera::MoveForward(float distance)
+{
+    position_ += front_ * distance;
+    target_ = position_ + front_;
+}
+
+void Camera::MoveBackward(float distance)
+{
+    position_ -= front_ * distance;
+    target_ = position_ + front_;
+}
+
+void Camera::MoveLeft(float distance)
+{
+    position_ -= right_ * distance;
+    target_ = position_ + front_;
+}
+
+void Camera::MoveRight(float distance)
+{
+    position_ += right_ * distance;
+    target_ = position_ + front_;
+}
+
+void Camera::MoveUp(float distance)
+{
+    position_ += up_ * distance;
+    target_ = position_ + front_;
+}
+
+void Camera::MoveDown(float distance)
+{
+    position_ -= up_ * distance;
+    target_ = position_ + front_;
+}
+
+void Camera::RotateView(float yawDelta, float pitchDelta)
+{
+    yaw_ += yawDelta;
+    pitch_ += pitchDelta;
+
+    // Constrain pitch
+    if (pitch_ > 89.0f) pitch_ = 89.0f;
+    if (pitch_ < -89.0f) pitch_ = -89.0f;
+
+    UpdateCameraVectors();
+    target_ = position_ + front_;
 }
 
 } // namespace kcShaders

@@ -9,6 +9,7 @@
 
 namespace kcShaders {
 class Scene;
+class Camera;
 
 class Renderer {
   public:
@@ -19,12 +20,11 @@ class Renderer {
     void shutdown();
 
     void clear(float r, float g, float b, float a);
-    void present();
     
     // Framebuffer methods
     void resize_framebuffer(int width, int height);
-    void render_to_framebuffer();
-    void render_scene(Scene* scene);
+    void render_shadertoy();
+    void render_scene(kcShaders::Scene* scene, kcShaders::Camera* camera);
     GLuint get_framebuffer_texture() const { return fbo_texture_; }
     int get_fb_width() const { return fb_width_; }
     int get_fb_height() const { return fb_height_; }

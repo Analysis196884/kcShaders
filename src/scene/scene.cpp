@@ -16,6 +16,21 @@ glm::mat4 Transform::localMatrix() const
 
 // ================= SceneNode =================
 
+SceneNode::~SceneNode()
+{
+    // Clean up mesh if owned
+    if (mesh) {
+        delete mesh;
+        mesh = nullptr;
+    }
+    
+    // Clean up material if owned
+    if (material) {
+        delete material;
+        material = nullptr;
+    }
+}
+
 SceneNode* SceneNode::createChild() 
 {
     children.emplace_back(std::make_unique<SceneNode>());
@@ -51,6 +66,12 @@ void SceneNode::collectRenderItems(std::vector<RenderItem>& out) const
 }
 
 // ================= Scene =================
+
+Scene::~Scene()
+{
+    // unique_ptr will automatically clean up SceneNodes
+    // SceneNode destructor will clean up meshes and materials
+}
 
 SceneNode* Scene::createRoot() 
 {

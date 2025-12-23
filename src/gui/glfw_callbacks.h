@@ -6,6 +6,6 @@
 
 namespace kcShaders {
 
-void wasd_callback(GLFWwindow* window, int key, int scancode, int action, int mods);
+void escape_callback(GLFWwindow* window, int key, int scancode, int action, int mods);
 
 } // namespace kcShaders

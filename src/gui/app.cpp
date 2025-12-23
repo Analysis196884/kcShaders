@@ -6,6 +6,8 @@
 #include "graphics/renderer.h"
 #include "scene/scene.h"
 #include "scene/demo_scene.h"
+#include "scene/camera.h"
+#include "gui/glfw_callbacks.h"
 
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
@@ -37,11 +39,9 @@ App::App(const std::string& title)
     , regular_font_(nullptr)
     , mono_font_(nullptr)
     , current_scene_(nullptr)
-{   
-    // Set default shader paths (will be overridden by config if it exists)
-    strcpy_s(vertex_shader_path_, sizeof(vertex_shader_path_), "../../../src/shaders/scene.vert");
-    strcpy_s(fragment_shader_path_, sizeof(fragment_shader_path_), "../../../src/shaders/scene.frag");
-    
+    , camera_(nullptr)
+    , camera_speed_(5.0f)
+{
     // Load config (will override defaults if file exists)
     LoadConfig();
     
@@ -170,7 +170,7 @@ bool App::Initialize(const std::string& title)
 
     // Initialize renderer with window
     // Explicitly use the global Renderer type to match the member declaration
-    renderer_ = new kcShaders::Renderer(window_, width_, height_);
+    renderer_ = new Renderer(window_, width_, height_);
     if (!renderer_->initialize()) {
         std::cerr << "Failed to initialize renderer\n";
         return false;
@@ -190,6 +190,14 @@ bool App::Initialize(const std::string& title)
     // Load demo scene by default
     LoadDemoScene();
 
+    // Create camera
+    int fb_w = renderer_->get_fb_width();
+    int fb_h = renderer_->get_fb_height();
+    float aspect_ratio = static_cast<float>(fb_w) / static_cast<float>(fb_h);
+    camera_ = new Camera(45.0f, aspect_ratio, 0.1f, 100.0f);
+    camera_->SetPosition(glm::vec3(0.0f, 2.0f, 5.0f));
+    camera_->SetTarget(glm::vec3(0.0f, 0.0f, 0.0f));
+
     is_running_ = true;
     last_frame_time_ = static_cast<float>(glfwGetTime());
 
@@ -203,6 +211,12 @@ void App::Shutdown()
     
     // Clean up scene
     ClearScene();
+    
+    // Clean up camera
+    if (camera_) {
+        delete camera_;
+        camera_ = nullptr;
+    }
     
     if (renderer_) {
         delete renderer_;
@@ -350,8 +364,57 @@ void App::ProcessEvents()
     glfwPollEvents();
 }
 
+void App::ProcessKeyboardInput()
+{
+    if (!camera_) {
+        return;
+    }
+    
+    // Calculate movement speed based on delta time for frame-rate independent movement
+    float move_speed = camera_speed_ * delta_time_;
+    
+    // WASD movement - these can all be pressed simultaneously
+    if (glfwGetKey(window_, GLFW_KEY_W) == GLFW_PRESS) {
+        camera_->MoveForward(move_speed);
+    }
+    if (glfwGetKey(window_, GLFW_KEY_S) == GLFW_PRESS) {
+        camera_->MoveBackward(move_speed);
+    }
+    if (glfwGetKey(window_, GLFW_KEY_A) == GLFW_PRESS) {
+        camera_->MoveLeft(move_speed);
+    }
+    if (glfwGetKey(window_, GLFW_KEY_D) == GLFW_PRESS) {
+        camera_->MoveRight(move_speed);
+    }
+    
+    // Vertical movement
+    if (glfwGetKey(window_, GLFW_KEY_Q) == GLFW_PRESS) {
+        camera_->MoveUp(move_speed);
+    }
+    if (glfwGetKey(window_, GLFW_KEY_E) == GLFW_PRESS) {
+        camera_->MoveDown(move_speed);
+    }
+    
+    // Arrow keys for rotation (optional alternative to mouse)
+    float rotate_speed = 30.0f * delta_time_; // degrees per second
+    if (glfwGetKey(window_, GLFW_KEY_LEFT) == GLFW_PRESS) {
+        camera_->RotateView(-rotate_speed, 0.0f);
+    }
+    if (glfwGetKey(window_, GLFW_KEY_RIGHT) == GLFW_PRESS) {
+        camera_->RotateView(rotate_speed, 0.0f);
+    }
+    if (glfwGetKey(window_, GLFW_KEY_UP) == GLFW_PRESS) {
+        camera_->RotateView(0.0f, rotate_speed);
+    }
+    if (glfwGetKey(window_, GLFW_KEY_DOWN) == GLFW_PRESS) {
+        camera_->RotateView(0.0f, -rotate_speed);
+    }
+}
+
 void App::Update(float delta_time) 
 {
+    ProcessKeyboardInput();
+    
     // Check shader file changes every 0.5 seconds
     shader_check_timer_ += delta_time;
     if (shader_check_timer_ >= 0.5f) {
@@ -380,11 +443,11 @@ void App::Render()
     glClearColor(clear_color_[0], clear_color_[1], clear_color_[2], clear_color_[3]);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // Render scene if available, otherwise render default fullscreen triangle
-    if (current_scene_) {
-        renderer_->render_scene(current_scene_);
+    // Render scene if available
+    if (current_scene_ && camera_) {
+        renderer_->render_scene(current_scene_, camera_);
     } else {
-        renderer_->present();
+        renderer_->render_shadertoy();
     }
 
     // Render ImGui
@@ -496,27 +559,6 @@ void App::RenderUI()
         }
     }
     
-    ImGui::Separator();
-    
-    // Preview shader code
-    ImGui::Text("Shader Preview (example)");
-    
-    // Use mono font for shader code
-    if (mono_font_) {
-        ImGui::PushFont(mono_font_);
-    }
-    
-    ImGui::Text("// Vertex Shader Example");
-    ImGui::Text("#version 330 core");
-    ImGui::Text("layout (location = 0) in vec3 aPos;");
-    ImGui::Text("void main() {");
-    ImGui::Text("    gl_Position = vec4(aPos, 1.0);");
-    ImGui::Text("}");
-    
-    if (mono_font_) {
-        ImGui::PopFont();
-    }
-    
     ImGui::End();
 
     // Viewport window - Display 3D scene from framebuffer
@@ -590,8 +632,28 @@ void App::RenderUI()
             bool node_open = ImGui::TreeNode("Node", "Root Node %zu", i);
             if (node_open) {
                 if (root->mesh) {
-                    ImGui::Text("  Mesh: %u indices", root->mesh->indexCount());
+                    ImGui::Text("  Mesh: %s", root->mesh->name().c_str());
                 }
+                
+                // Display material information
+                if (root->material) {
+                    ImGui::Text("  Material: %s", root->material->name.c_str());
+                    ImGui::Indent();
+                    ImGui::ColorEdit3("Albedo", &root->material->albedo[0], ImGuiColorEditFlags_NoInputs);
+                    ImGui::Text("  Metallic: %.2f", root->material->metallic);
+                    ImGui::Text("  Roughness: %.2f", root->material->roughness);
+                    if (root->material->emissiveStrength > 0.0f) {
+                        ImGui::Text("  Emissive: (%.2f, %.2f, %.2f) * %.2f", 
+                            root->material->emissive.x,
+                            root->material->emissive.y,
+                            root->material->emissive.z,
+                            root->material->emissiveStrength);
+                    }
+                    ImGui::Unindent();
+                } else {
+                    ImGui::Text("  Material: Default");
+                }
+                
                 ImGui::Text("  Position: (%.2f, %.2f, %.2f)", 
                     root->transform.position.x, 
                     root->transform.position.y, 
@@ -625,13 +687,9 @@ void App::FramebufferSizeCallback(GLFWwindow* window, int width, int height)
 
 void App::KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
-    App* app = static_cast<App*>(glfwGetWindowUserPointer(window));
-    if (app && action == GLFW_PRESS) {
-        // Handle key presses
-        if (key == GLFW_KEY_ESCAPE) {
-            app->is_running_ = false;
-        }
-    }
+    // Only handle ESC key here - movement is handled via polling in ProcessKeyboardInput()
+    // to support simultaneous key presses (e.g., W+A for diagonal movement)
+    escape_callback(window, key, scancode, action, mods);
 }
 
 void App::MouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
@@ -646,7 +704,7 @@ void App::ScrollCallback(GLFWwindow* window, double xoffset, double yoffset)
 
 void App::CursorPosCallback(GLFWwindow* window, double xpos, double ypos)
 {
-    // Handle cursor position events
+
 }
 
 void App::LoadConfig()

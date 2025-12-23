@@ -15,12 +15,28 @@ public:
     void SetPosition(const glm::vec3& position);
     void SetTarget(const glm::vec3& target);
     void SetUpVector(const glm::vec3& up);
+    
+    glm::vec3 GetPosition() const { return position_; }
+    glm::vec3 GetFront() const { return front_; }
+    glm::vec3 GetRight() const { return right_; }
+    glm::vec3 GetUp() const { return up_; }
 
     glm::mat4 GetViewMatrix() const;
     glm::mat4 GetProjectionMatrix() const;
 
     void ProcessMouseMovement(float xoffset, float yoffset);
     void ProcessMouseScroll(float yoffset);
+    
+    // Movement methods
+    void MoveForward(float distance);
+    void MoveBackward(float distance);
+    void MoveLeft(float distance);
+    void MoveRight(float distance);
+    void MoveUp(float distance);
+    void MoveDown(float distance);
+
+    // Rotate view method
+    void RotateView(float yawDelta, float pitchDelta);
 
 private:
     glm::vec3 position_;

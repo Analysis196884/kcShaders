@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <string>
 #include <cstdint>
 #include <glad/glad.h>
 #include <glm/glm.hpp>
@@ -35,6 +36,7 @@ public:
     // data setup
     void setVertices(const std::vector<Vertex>& vertices);
     void setIndices(const std::vector<uint32_t>& indices);
+    void setName(const std::string& name) { this->name_ = name; }
 
     // GPU upload
     void upload();
@@ -45,6 +47,7 @@ public:
     // query
     bool isUploaded() const { return uploaded; }
     uint32_t indexCount() const { return static_cast<uint32_t>(indices.size()); }
+    std::string name() const { return this->name_; };
 
 private:
     void releaseGPU();
@@ -53,6 +56,8 @@ private:
     // CPU-side data
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
+
+    std::string name_ = "Unnamed Mesh";
 
     // GPU-side objects
     GLuint vao = 0;

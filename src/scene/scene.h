@@ -34,6 +34,9 @@ struct RenderItem {
 // ================= SceneNode =================
 class SceneNode {
 public:
+    SceneNode() = default;
+    ~SceneNode();
+    
     Transform transform;
 
     Mesh* mesh = nullptr; // nullptr if not renderable
@@ -55,6 +58,9 @@ public:
 // ================= Scene =================
 class Scene {
 public:
+    Scene() = default;
+    ~Scene();
+    
     std::vector<std::unique_ptr<SceneNode>> roots;
 
     SceneNode* createRoot();

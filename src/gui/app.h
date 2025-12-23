@@ -11,6 +11,7 @@ namespace kcShaders {
 
 class Scene;
 class Renderer;
+class Camera;
 
 class App {
 public:
@@ -27,9 +28,11 @@ public:
     
     // Getters
     bool IsRunning() const { return is_running_; }
+    void Stop() { is_running_ = false; }
     GLFWwindow* GetWindow() const { return window_; }
     int GetWidth() const { return width_; }
     int GetHeight() const { return height_; }
+    Camera* GetCamera() const { return camera_; }
 
 private:
     bool Initialize(const std::string& title);
@@ -46,6 +49,7 @@ private:
     void ClearScene();
     
     void ProcessEvents();
+    void ProcessKeyboardInput();
     void Update(float delta_time);
     void Render();
     void RenderUI();
@@ -89,6 +93,10 @@ private:
     
     // Scene
     Scene* current_scene_;
+    
+    // Camera
+    Camera* camera_;
+    float camera_speed_;
 };
 
 }  // namespace kcShaders

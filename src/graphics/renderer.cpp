@@ -1,6 +1,8 @@
 #include "renderer.h"
 #include "scene/scene.h"
 #include "scene/mesh.h"
+#include "scene/camera.h"
+#include "scene/material.h"
 
 #include <fstream>
 #include <sstream>
@@ -92,7 +94,7 @@ void Renderer::clear(float r, float g, float b, float a)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 
-void Renderer::render_to_framebuffer()
+void Renderer::render_shadertoy()
 {
     // Bind framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
@@ -103,36 +105,34 @@ void Renderer::render_to_framebuffer()
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     
     // Render scene
-    if (shader_program_ > 0 && vao_ > 0) {
+    if (shader_program_ > 0 && vao_ > 0) 
+    {
         glUseProgram(shader_program_);
-        // Provide shadertoy-like uniforms if enabled and present in shader
-        if (shadertoy_mode_) 
+        // Provide shadertoy-like uniforms 
+        // iResolution (vec3)
+        GLint locRes = glGetUniformLocation(shader_program_, "iResolution");
+        if (locRes >= 0) {
+            glUniform3f(static_cast<GLint>(locRes), (float)fb_width_, (float)fb_height_, 1.0f);
+        }
+
+        // iTime (float)
+        GLint locTime = glGetUniformLocation(shader_program_, "iTime");
+        if (locTime >= 0) 
         {
-            // iResolution (vec3)
-            GLint locRes = glGetUniformLocation(shader_program_, "iResolution");
-            if (locRes >= 0) {
-                glUniform3f(static_cast<GLint>(locRes), (float)fb_width_, (float)fb_height_, 1.0f);
-            }
+            float t = static_cast<float>(glfwGetTime());
+            glUniform1f(locTime, t);
+        }
 
-            // iTime (float)
-            GLint locTime = glGetUniformLocation(shader_program_, "iTime");
-            if (locTime >= 0) 
-            {
-                float t = static_cast<float>(glfwGetTime());
-                glUniform1f(locTime, t);
-            }
-
-            // iMouse (vec4) - x,y,current click x,y (simple mapping: z/w = 0)
-            GLint locMouse = glGetUniformLocation(shader_program_, "iMouse");
-            if (locMouse >= 0) 
-            {
-                double mx, my;
-                glfwGetCursorPos(window_, &mx, &my);
-                // Convert to pixels and invert Y to match shadertoy's origin (bottom-left)
-                float mouse_x = static_cast<float>(mx);
-                float mouse_y = static_cast<float>(fb_height_) - static_cast<float>(my);
-                glUniform4f(locMouse, mouse_x, mouse_y, 0.0f, 0.0f);
-            }
+        // iMouse (vec4) - x,y,current click x,y (simple mapping: z/w = 0)
+        GLint locMouse = glGetUniformLocation(shader_program_, "iMouse");
+        if (locMouse >= 0) 
+        {
+            double mx, my;
+            glfwGetCursorPos(window_, &mx, &my);
+            // Convert to pixels and invert Y to match shadertoy's origin (bottom-left)
+            float mouse_x = static_cast<float>(mx);
+            float mouse_y = static_cast<float>(fb_height_) - static_cast<float>(my);
+            glUniform4f(locMouse, mouse_x, mouse_y, 0.0f, 0.0f);
         }
         glBindVertexArray(vao_);
         glDrawArrays(GL_TRIANGLES, 0, vertex_count_);
@@ -143,15 +143,9 @@ void Renderer::render_to_framebuffer()
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-void Renderer::present()
+void Renderer::render_scene(Scene* scene, Camera* camera)
 {
-    // This method is kept for compatibility but rendering now happens in render_to_framebuffer
-    render_to_framebuffer();
-}
-
-void Renderer::render_scene(Scene* scene)
-{
-    if (!scene || shader_program_ == 0) {
+    if (!scene || !camera || shader_program_ == 0) {
         return;
     }
 
@@ -166,6 +160,29 @@ void Renderer::render_scene(Scene* scene)
     // Use the shader program
     glUseProgram(shader_program_);
     
+    // Get view and projection matrices from camera
+    glm::mat4 view = camera->GetViewMatrix();
+    glm::mat4 proj = camera->GetProjectionMatrix();
+    
+    // Set view and projection uniforms 
+    GLint locView = glGetUniformLocation(shader_program_, "uView");
+    GLint locProj = glGetUniformLocation(shader_program_, "uProjection");
+    
+    if (locView >= 0) {
+        glUniformMatrix4fv(locView, 1, GL_FALSE, &view[0][0]);
+    }
+    
+    if (locProj >= 0) {
+        glUniformMatrix4fv(locProj, 1, GL_FALSE, &proj[0][0]);
+    }
+    
+    // Set camera position for lighting calculations
+    GLint locViewPos = glGetUniformLocation(shader_program_, "viewPos");
+    if (locViewPos >= 0) {
+        glm::vec3 camPos = camera->GetPosition();
+        glUniform3fv(locViewPos, 1, &camPos[0]);
+    }
+    
     // Collect all render items from the scene
     std::vector<RenderItem> items;
     scene->collectRenderItems(items);
@@ -179,24 +196,67 @@ void Renderer::render_scene(Scene* scene)
                 glUniformMatrix4fv(locModel, 1, GL_FALSE, &item.modelMatrix[0][0]);
             }
             
-            // TODO: Set view and projection matrices
-            // For now, use simple orthographic view
-            GLint locView = glGetUniformLocation(shader_program_, "uView");
-            GLint locProj = glGetUniformLocation(shader_program_, "uProjection");
-            
-            if (locView >= 0) {
-                glm::mat4 view = glm::lookAt(
-                    glm::vec3(0.0f, 2.0f, 5.0f),
-                    glm::vec3(0.0f, 0.0f, 0.0f),
-                    glm::vec3(0.0f, 1.0f, 0.0f)
-                );
-                glUniformMatrix4fv(locView, 1, GL_FALSE, &view[0][0]);
-            }
-            
-            if (locProj >= 0) {
-                float aspect = static_cast<float>(fb_width_) / static_cast<float>(fb_height_);
-                glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
-                glUniformMatrix4fv(locProj, 1, GL_FALSE, &proj[0][0]);
+            // Set material properties
+            if (item.material) {
+                // Albedo/Base Color
+                GLint locAlbedo = glGetUniformLocation(shader_program_, "material.albedo");
+                if (locAlbedo >= 0) {
+                    glUniform3fv(locAlbedo, 1, &item.material->albedo[0]);
+                }
+                
+                // PBR properties
+                GLint locMetallic = glGetUniformLocation(shader_program_, "material.metallic");
+                if (locMetallic >= 0) {
+                    glUniform1f(locMetallic, item.material->metallic);
+                }
+                
+                GLint locRoughness = glGetUniformLocation(shader_program_, "material.roughness");
+                if (locRoughness >= 0) {
+                    glUniform1f(locRoughness, item.material->roughness);
+                }
+                
+                GLint locAO = glGetUniformLocation(shader_program_, "material.ao");
+                if (locAO >= 0) {
+                    glUniform1f(locAO, item.material->ao);
+                }
+                
+                // Emissive
+                GLint locEmissive = glGetUniformLocation(shader_program_, "material.emissive");
+                if (locEmissive >= 0) {
+                    glUniform3fv(locEmissive, 1, &item.material->emissive[0]);
+                }
+                
+                GLint locEmissiveStrength = glGetUniformLocation(shader_program_, "material.emissiveStrength");
+                if (locEmissiveStrength >= 0) {
+                    glUniform1f(locEmissiveStrength, item.material->emissiveStrength);
+                }
+                
+                // Opacity
+                GLint locOpacity = glGetUniformLocation(shader_program_, "material.opacity");
+                if (locOpacity >= 0) {
+                    glUniform1f(locOpacity, item.material->opacity);
+                }
+            } else {
+                // Use default material values if no material is assigned
+                GLint locAlbedo = glGetUniformLocation(shader_program_, "material.albedo");
+                if (locAlbedo >= 0) {
+                    glUniform3f(locAlbedo, 0.8f, 0.8f, 0.8f);
+                }
+                
+                GLint locMetallic = glGetUniformLocation(shader_program_, "material.metallic");
+                if (locMetallic >= 0) {
+                    glUniform1f(locMetallic, 0.0f);
+                }
+                
+                GLint locRoughness = glGetUniformLocation(shader_program_, "material.roughness");
+                if (locRoughness >= 0) {
+                    glUniform1f(locRoughness, 0.5f);
+                }
+                
+                GLint locAO = glGetUniformLocation(shader_program_, "material.ao");
+                if (locAO >= 0) {
+                    glUniform1f(locAO, 1.0f);
+                }
             }
             
             // Draw the mesh
@@ -225,7 +285,7 @@ bool Renderer::use_shader(const std::string& vertex_path, const std::string& fra
         return false;
     }
 
-    // Load vertex shader if provided, otherwise use a built-in fullscreen passthrough
+    // Load vertex shader
     if (!vertex_path.empty()) {
         vertex_code = load_shader_source(vertex_path);
         if (vertex_code.empty()) {
@@ -233,15 +293,7 @@ bool Renderer::use_shader(const std::string& vertex_path, const std::string& fra
             return false;
         }
     } else {
-        // Default fullscreen triangle vertex shader that provides UV coordinates
-        vertex_code = R"GLSL(#version 330 core
-layout (location = 0) in vec3 aPos;
-out vec2 uv;
-void main() {
-    uv = (aPos.xy + vec2(1.0)) * 0.5;
-    gl_Position = vec4(aPos, 1.0);
-}
-)GLSL";
+        // ...
     }
 
     GLuint vertex_shader = compile_shader(GL_VERTEX_SHADER, vertex_code.c_str());
