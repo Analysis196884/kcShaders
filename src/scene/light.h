@@ -50,7 +50,11 @@ public:
     float shadowDistance = 100.0f;            // Max shadow distance
     float shadowBias = 0.005f;                // Shadow bias to prevent acne
     
-    static DirectionalLight* CreateSunlight(const glm::vec3& dir = glm::vec3(-0.3f, -1.0f, -0.5f));
+    static DirectionalLight* CreateSunlight(
+        const glm::vec3& dir = glm::vec3(-0.3f, -1.0f, -0.5f), 
+        const glm::vec3& color = glm::vec3(1.0f, 0.95f, 0.8f), 
+        float intensity = 1.0f
+    );
 };
 
 // Point light (omnidirectional, like a bulb)
@@ -69,7 +73,10 @@ public:
     
     float GetAttenuation(float distance) const override;
     
-    static PointLight* CreateBulb(const glm::vec3& pos, const glm::vec3& color = glm::vec3(1.0f), float radius = 10.0f);
+    static PointLight* CreateBulb(
+        const glm::vec3& pos, const glm::vec3& color = glm::vec3(1.0f),
+        float radius = 10.0f, float intensity = 1.0f
+    );
 };
 
 // Spot light (cone-shaped, like a flashlight)
@@ -113,7 +120,10 @@ public:
     // Two-sided emission
     bool twoSided = false;
     
-    static AreaLight* CreatePanel(const glm::vec3& pos, const glm::vec3& normal, float width, float height);
+    static AreaLight* CreatePanel(
+        const glm::vec3& pos, const glm::vec3& normal, float width, float height,
+        const glm::vec3& color = glm::vec3(1.0f), float intensity = 10.0f
+    );
 };
 
 // Ambient light (global illumination approximation)

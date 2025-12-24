@@ -9,6 +9,10 @@
 #include "scene/camera.h"
 #include "gui/glfw_callbacks.h"
 
+#ifdef ENABLE_USD_SUPPORT
+#include "loaders/usd_loader.h"
+#endif
+
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 
@@ -18,6 +22,13 @@
 #include <cstring>
 #include <ctime>
 #include <sys/stat.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <commdlg.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#endif
 
 namespace kcShaders {
 
@@ -42,6 +53,10 @@ App::App(const std::string& title)
     , camera_(nullptr)
     , camera_speed_(5.0f)
 {
+    // Initialize shader path arrays to empty strings
+    vertex_shader_path_[0] = '\0';
+    fragment_shader_path_[0] = '\0';
+    
     // Load config (will override defaults if file exists)
     LoadConfig();
     
@@ -268,10 +283,9 @@ void App::PrepareImGuiFonts()
     int win_width, win_height;
     glfwGetWindowSize(window_, &win_width, &win_height);
     
-    // Calculate coordinate scale (similar to polyscope)
     float coord_scale_x = static_cast<float>(fb_width) / static_cast<float>(win_width);
     float coord_scale_y = static_cast<float>(fb_height) / static_cast<float>(win_height);
-    float rasterizer_density = std::max(coord_scale_x, coord_scale_y);
+    float rasterizer_density = (std::max)(coord_scale_x, coord_scale_y);
     
     // Clear existing fonts
     io.Fonts->Clear();
@@ -492,8 +506,24 @@ void App::RenderUI()
     // Menu Bar
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("File")) {
+#ifdef ENABLE_USD_SUPPORT
+            if (ImGui::MenuItem("Open USD File...", "Ctrl+O")) {
+                OpenFileDialog();
+            }
+            ImGui::Separator();
+#endif
             if (ImGui::MenuItem("Exit", "Alt+F4")) {
                 is_running_ = false;
+            }
+            ImGui::EndMenu();
+        }
+        
+        if (ImGui::BeginMenu("Scene")) {
+            if (ImGui::MenuItem("Load Demo Scene")) {
+                LoadDemoScene();
+            }
+            if (ImGui::MenuItem("Clear Scene")) {
+                ClearScene();
             }
             ImGui::EndMenu();
         }
@@ -859,5 +889,74 @@ void App::ClearScene()
         std::cout << "Scene cleared\n";
     }
 }
+
+#ifdef ENABLE_USD_SUPPORT
+void App::LoadUsdFile(const std::string& filepath)
+{
+    if (filepath.empty()) {
+        std::cerr << "Empty USD file path\n";
+        return;
+    }
+
+    std::cout << "Loading USD file: " << filepath << "\n";
+    
+    ClearScene();
+    current_scene_ = new Scene();
+    
+    UsdLoader loader;
+    if (loader.LoadFromFile(filepath, current_scene_)) {
+        std::cout << "USD file loaded successfully!\n";
+        std::cout << "Scene has " << current_scene_->roots.size() << " root nodes\n";
+        std::cout << "Scene has " << current_scene_->lights.size() << " lights\n";
+        
+        // Reset camera to a good viewing position
+        if (camera_) {
+            camera_->SetPosition(glm::vec3(5.0f, 5.0f, 5.0f));
+            camera_->SetTarget(glm::vec3(0.0f, 0.0f, 0.0f));
+        }
+    } else {
+        std::cerr << "Failed to load USD file: " << loader.GetLastError() << "\n";
+        // Load demo scene as fallback
+        LoadDemoScene();
+    }
+#else
+    std::cerr << "USD support not enabled\n";
+    LoadDemoScene();
+#endif
+}
+
+#ifdef ENABLE_USD_SUPPORT
+void App::OpenFileDialog()
+{
+#ifdef _WIN32
+    OPENFILENAMEW ofn;
+    wchar_t szFile[260] = {0};
+    
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = glfwGetWin32Window(window_);
+    ofn.lpstrFile = szFile;
+    ofn.nMaxFile = sizeof(szFile) / sizeof(wchar_t);
+    ofn.lpstrFilter = L"USD Files\0*.usd;*.usda;*.usdc\0All Files\0*.*\0";
+    ofn.nFilterIndex = 1;
+    ofn.lpstrFileTitle = NULL;
+    ofn.nMaxFileTitle = 0;
+    ofn.lpstrInitialDir = NULL;
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+    
+    if (GetOpenFileNameW(&ofn) == TRUE) {
+        // Convert wide char to UTF-8
+        int size = WideCharToMultiByte(CP_UTF8, 0, szFile, -1, nullptr, 0, nullptr, nullptr);
+        if (size > 0) {
+            std::string utf8Path(size - 1, '\0');
+            WideCharToMultiByte(CP_UTF8, 0, szFile, -1, &utf8Path[0], size, nullptr, nullptr);
+            LoadUsdFile(utf8Path);
+        }
+    }
+#else
+    std::cerr << "File dialog not implemented for this platform\n";
+#endif
+}
+#endif // ENABLE_USD_SUPPORT
 
 } // namespace kcShaders

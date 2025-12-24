@@ -47,6 +47,10 @@ private:
     // Scene management
     void LoadDemoScene();
     void ClearScene();
+#ifdef ENABLE_USD_SUPPORT
+    void LoadUsdFile(const std::string& filepath);
+    void OpenFileDialog();
+#endif
     
     void ProcessEvents();
     void ProcessKeyboardInput();

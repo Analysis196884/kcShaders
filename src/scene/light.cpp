@@ -27,13 +27,13 @@ DirectionalLight::DirectionalLight()
     name = "Directional Light";
 }
 
-DirectionalLight* DirectionalLight::CreateSunlight(const glm::vec3& dir)
+DirectionalLight* DirectionalLight::CreateSunlight(const glm::vec3& dir, const glm::vec3& color, float intensity)
 {
     DirectionalLight* light = new DirectionalLight();
     light->name = "Sunlight";
     light->direction = glm::normalize(dir);
-    light->color = glm::vec3(1.0f, 0.95f, 0.8f);  // Slightly warm white
-    light->intensity = 1.0f;
+    light->color = color;
+    light->intensity = intensity;
     return light;
 }
 
@@ -58,14 +58,14 @@ float PointLight::GetAttenuation(float distance) const
     return 1.0f / (constant + linear * distance + quadratic * distance * distance);
 }
 
-PointLight* PointLight::CreateBulb(const glm::vec3& pos, const glm::vec3& color, float radius)
+PointLight* PointLight::CreateBulb(const glm::vec3& pos, const glm::vec3& color, float radius, float intensity)
 {
     PointLight* light = new PointLight();
     light->name = "Bulb Light";
     light->position = pos;
     light->color = color;
     light->radius = radius;
-    light->intensity = 1.0f;
+    light->intensity = intensity;
     
     // Adjust attenuation based on radius
     light->constant = 1.0f;
@@ -134,15 +134,18 @@ AreaLight::AreaLight()
     name = "Area Light";
 }
 
-AreaLight* AreaLight::CreatePanel(const glm::vec3& pos, const glm::vec3& normal, float width, float height)
-{
+AreaLight* AreaLight::CreatePanel(
+    const glm::vec3& pos, const glm::vec3& normal,
+    float width, float height, const glm::vec3& color, float intensity
+) {
     AreaLight* light = new AreaLight();
     light->name = "Panel Light";
     light->position = pos;
     light->normal = glm::normalize(normal);
     light->width = width;
     light->height = height;
-    light->intensity = 10.0f;  // Area lights typically need higher intensity
+    light->intensity = intensity;
+    light->color = color;
     
     // Calculate tangent perpendicular to normal
     glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
