@@ -47,8 +47,15 @@ if (NOT glm_FOUND)
 endif()
 
 # Find USD (Pixar's Universal Scene Description)
-set(USD_ROOT "D:/Softwares/USD" CACHE PATH "USD installation directory")
-if(EXISTS "${USD_ROOT}/include/pxr")
+if(DEFINED ENV{USD_ROOT})
+    set(USD_ROOT_DEFAULT "$ENV{USD_ROOT}")
+else()
+    set(USD_ROOT_DEFAULT "")
+endif()
+
+set(USD_ROOT "${USD_ROOT_DEFAULT}" CACHE PATH "USD installation directory")
+
+if(USD_ROOT AND EXISTS "${USD_ROOT}/include/pxr")
     message(STATUS "Found USD at ${USD_ROOT}")
     set(USD_INCLUDE_DIR "${USD_ROOT}/include")
     set(USD_LIBRARY_DIR "${USD_ROOT}/lib")

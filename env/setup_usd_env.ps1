@@ -1,7 +1,12 @@
 # USD Environment Setup Script
 # Run this script before using USD: . .\env\setup_usd_env.ps1
 
-$USD_ROOT = "D:\Softwares\USD" # Change this path to your USD installation directory
+$USD_ROOT = $env:USD_ROOT
+if (-not $USD_ROOT) {
+    Write-Host "ERROR: USD_ROOT environment variable is not set." -ForegroundColor Red
+    Write-Host "Please set USD_ROOT to the root directory of your USD installation." -ForegroundColor Yellow
+    return
+}
 
 # Set PYTHONPATH to USD's Python modules
 $env:PYTHONPATH = "$USD_ROOT\lib\python"
