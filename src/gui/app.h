@@ -12,6 +12,7 @@ namespace kcShaders {
 class Scene;
 class Renderer;
 class Camera;
+class SceneNode;
 enum class LightType;
 
 class App {
@@ -59,6 +60,9 @@ private:
     void Update(float delta_time);
     void Render();
     void RenderUI();
+    
+    // Helper method for rendering scene node tree
+    void DisplaySceneNodeTree(SceneNode* node, int nodeIndex);
     
     // GLFW callbacks
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);

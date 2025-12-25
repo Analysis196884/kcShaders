@@ -211,7 +211,7 @@ bool App::Initialize(const std::string& title)
     int fb_h = renderer_->get_fb_height();
     float aspect_ratio = static_cast<float>(fb_w) / static_cast<float>(fb_h);
     camera_ = new Camera(45.0f, aspect_ratio, 0.1f, 100.0f);
-    camera_->SetPosition(glm::vec3(0.0f, 0.0f, 5.0f));
+    camera_->SetPosition(glm::vec3(5.0f, 5.0f, 5.0f));
     camera_->SetTarget(glm::vec3(0.0f, 0.0f, 0.0f));
 
     is_running_ = true;
@@ -403,10 +403,10 @@ void App::ProcessKeyboardInput()
     }
     
     // Vertical movement
-    if (glfwGetKey(window_, GLFW_KEY_Q) == GLFW_PRESS) {
+    if (glfwGetKey(window_, GLFW_KEY_E) == GLFW_PRESS) {
         camera_->MoveUp(move_speed);
     }
-    if (glfwGetKey(window_, GLFW_KEY_E) == GLFW_PRESS) {
+    if (glfwGetKey(window_, GLFW_KEY_Q) == GLFW_PRESS) {
         camera_->MoveDown(move_speed);
     }
     
@@ -557,6 +557,18 @@ void App::RenderUI()
     ImGui::Text("Application Info");
     ImGui::Separator();
     ImGui::Text("FPS: %.1f (%.3f ms/frame)", 1.0f / delta_time_, delta_time_ * 1000.0f);
+
+    // Camera info and controls
+    if (camera_) {
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Text("Camera");
+        
+        glm::vec3 cam_pos = camera_->GetPosition();
+        ImGui::Text("Position: (%.2f, %.2f, %.2f)", cam_pos.x, cam_pos.y, cam_pos.z);
+        
+        ImGui::SliderFloat("Speed", &camera_speed_, 1.0f, 20.0f, "%.1f units/s");
+    }
     
     ImGui::End();
 
@@ -658,47 +670,7 @@ void App::RenderUI()
         ImGui::Text("Hierarchy:");
         for (size_t i = 0; i < current_scene_->roots.size(); ++i) {
             const auto& root = current_scene_->roots[i];
-            ImGui::PushID(static_cast<int>(i));
-            
-            bool node_open = ImGui::TreeNode("Node", "Root Node %zu", i);
-            if (node_open) {
-                if (root->mesh) {
-                    ImGui::Text("  Mesh: %s", root->mesh->name().c_str());
-                }
-                
-                // Display material information
-                if (root->material) {
-                    ImGui::Text("  Material: %s", root->material->name.c_str());
-                    ImGui::Indent();
-                    ImGui::ColorEdit3("Albedo", &root->material->albedo[0], ImGuiColorEditFlags_NoInputs);
-                    ImGui::Text("  Metallic: %.2f", root->material->metallic);
-                    ImGui::Text("  Roughness: %.2f", root->material->roughness);
-                    if (root->material->emissiveStrength > 0.0f) {
-                        ImGui::Text("  Emissive: (%.2f, %.2f, %.2f) * %.2f", 
-                            root->material->emissive.x,
-                            root->material->emissive.y,
-                            root->material->emissive.z,
-                            root->material->emissiveStrength);
-                    }
-                    ImGui::Unindent();
-                } else {
-                    ImGui::Text("  Material: Default");
-                }
-                
-                ImGui::Text("  Position: (%.2f, %.2f, %.2f)", 
-                    root->transform.position.x, 
-                    root->transform.position.y, 
-                    root->transform.position.z);
-                
-                // Show children count if any
-                if (!root->children.empty()) {
-                    ImGui::Text("  Children: %zu", root->children.size());
-                }
-                
-                ImGui::TreePop();
-            }
-            
-            ImGui::PopID();
+            DisplaySceneNodeTree(root.get(), static_cast<int>(i));
         }
         
         // Lights section
@@ -937,15 +909,15 @@ void App::AddLight(LightType type)
     
     switch (type) {
         case LightType::Directional: {
-            light = DirectionalLight::CreateSunlight(glm::vec3(0.0f, -1.0f, -1.0f));
+            light = DirectionalLight::CreateSunlight(glm::vec3(0.0f, 0.0f, -1.0f));
             break;
         }
         case LightType::Point: {
-            light = PointLight::CreateBulb(glm::vec3(5.0f, 5.0f, 5.0f), glm::vec3(1.0f), 10.0f);
+            light = PointLight::CreateBulb(glm::vec3(5.0f, 0.0f, 5.0f));
             break;
         }
         case LightType::Spot: {
-            light = SpotLight::CreateFlashlight(glm::vec3(5.0f, 5.0f, 5.0f), glm::vec3(0.0f, -1.0f, 0.0f));
+            light = SpotLight::CreateFlashlight(glm::vec3(5.0f, 0.0f, 5.0f), glm::vec3(0.0f, 0.0f, -1.0f));
             break;
         }
         case LightType::Area: {
@@ -963,6 +935,99 @@ void App::AddLight(LightType type)
         std::cout << "Light added to scene\n";
     }
 }
+
+void App::DisplaySceneNodeTree(SceneNode* node, int nodeIndex)
+{
+    if (!node) return;
+    
+    // Skip trivial group nodes (no mesh, single child with different name pattern)
+    // This helps reduce noise from intermediate transform nodes
+    if (node->mesh == nullptr && node->children.size() == 1) {
+        SceneNode* child = node->children[0].get();
+        // Only skip if this is an intermediate node (names don't match exactly)
+        if (node->name != child->name && node->children[0]->mesh != nullptr) {
+            // Directly display the child mesh without the intermediate group
+            DisplaySceneNodeTree(child, nodeIndex);
+            return;
+        }
+    }
+    
+    ImGui::PushID(nodeIndex);
+    
+    // Determine if this node should be displayed as a tree node
+    bool hasChildren = !node->children.empty();
+    bool hasMesh = node->mesh != nullptr;
+    bool hasContent = hasChildren || hasMesh;
+    
+    // Node name and type indicator
+    std::string nodeLabel = node->name;
+    if (hasMesh) {
+        nodeLabel += " [Mesh]";
+    }
+    if (hasChildren && !hasMesh) {
+        nodeLabel += " [Group]";
+    }
+    
+    bool node_open = false;
+    if (hasContent) {
+        node_open = ImGui::TreeNode("SceneNode", "%s", nodeLabel.c_str());
+    } else {
+        ImGui::Bullet();
+        ImGui::Text("%s", nodeLabel.c_str());
+    }
+    
+    if (node_open || !hasContent) {
+        // Display transform (only if non-identity)
+        if (node->transform.position != glm::vec3(0.0f) || 
+            node->transform.scale != glm::vec3(1.0f) ||
+            // if not identity rotation
+            node->transform.rotation != glm::quat(1.0f, 0.0f, 0.0f, 0.0f)) {
+            ImGui::Text("Position: (%.2f, %.2f, %.2f)", 
+                node->transform.position.x, 
+                node->transform.position.y, 
+                node->transform.position.z);
+            
+            if (node->transform.scale != glm::vec3(1.0f)) {
+                ImGui::Text("Scale: (%.2f, %.2f, %.2f)", 
+                    node->transform.scale.x, 
+                    node->transform.scale.y, 
+                    node->transform.scale.z);
+            }
+        }
+        
+        // Display mesh info
+        if (node->mesh) {
+            ImGui::Text("Mesh: %s", node->mesh->name().c_str());
+            ImGui::Text("  Vertices: %zu, Indices: %zu", 
+                node->mesh->GetVertexCount(), 
+                node->mesh->GetIndexCount());
+        }
+        
+        // Display material info
+        if (node->material) {
+            ImGui::Text("Material: %s", node->material->name.c_str());
+            ImGui::Indent();
+            ImGui::ColorEdit3("Albedo##mat", &node->material->albedo[0], ImGuiColorEditFlags_NoInputs);
+            ImGui::Text("Metallic: %.2f", node->material->metallic);
+            ImGui::Text("Roughness: %.2f", node->material->roughness);
+            ImGui::Unindent();
+        }
+        
+        // Display children recursively
+        if (!node->children.empty()) {
+            for (size_t i = 0; i < node->children.size(); ++i) {
+                DisplaySceneNodeTree(node->children[i].get(), static_cast<int>(nodeIndex * 1000 + i));
+            }
+        }
+        
+        if (hasContent) {
+            ImGui::TreePop();
+        }
+    }
+    
+    ImGui::PopID();
+}
+
 
 #ifdef ENABLE_USD_SUPPORT
 void App::LoadUsdFile(const std::string& filepath)

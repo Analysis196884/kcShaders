@@ -48,6 +48,8 @@ public:
     // query
     bool isUploaded() const { return uploaded; }
     uint32_t indexCount() const { return static_cast<uint32_t>(indices.size()); }
+    uint32_t GetIndexCount() const { return indexCount(); }
+    uint32_t GetVertexCount() const { return static_cast<uint32_t>(vertices.size()); }
     std::string name() const { return this->name_; };
 
 private:

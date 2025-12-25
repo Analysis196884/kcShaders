@@ -23,11 +23,14 @@
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdGeom/xformable.h>
+#include <pxr/usd/usdGeom/primvarsAPI.h>
 #include <pxr/usd/usdLux/lightAPI.h>
 #include <pxr/usd/usdLux/distantLight.h>
 #include <pxr/usd/usdLux/sphereLight.h>
 #include <pxr/usd/usdLux/rectLight.h>
 #include <pxr/usd/usdShade/material.h>
+#include <pxr/usd/usdShade/materialBindingAPI.h>
+#include <pxr/usd/usdShade/shader.h>
 #include <pxr/base/gf/matrix4d.h>
 #include <pxr/base/gf/vec3f.h>
 
@@ -161,7 +164,7 @@ bool UsdLoader::ProcessPrim(void* primPtr, SceneNode* parentNode, Scene* scene) 
         glm::mat4 glmTransform;
         for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j++) {
-                glmTransform[j][i] = static_cast<float>(transform[i][j]);
+                glmTransform[i][j] = static_cast<float>(transform[i][j]);
             }
         }
         
@@ -174,9 +177,12 @@ bool UsdLoader::ProcessPrim(void* primPtr, SceneNode* parentNode, Scene* scene) 
         parentNode->transform.position = position;
         parentNode->transform.scale = scale;
         parentNode->transform.rotation = glm::degrees(glm::eulerAngles(rotation));
+        
+        std::cout << "  Transform - Position: (" << position.x << ", " << position.y << ", " << position.z << ")"
+                  << " Scale: (" << scale.x << ", " << scale.y << ", " << scale.z << ")" << std::endl;
     }
 
-    // Handle mesh geometry
+    // Handle mesh geometry - attach directly to this node
     if (prim->IsA<UsdGeomMesh>()) {
         UsdGeomMesh mesh(*prim);
         ProcessMesh(&mesh, parentNode);
@@ -211,6 +217,12 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
     VtArray<GfVec3f> points;
     usdMesh->GetPointsAttr().Get(&points);
     
+    // Check if mesh has valid geometry
+    if (points.empty()) {
+        std::cout << "  Warning: Mesh has no vertices" << std::endl;
+        return false;
+    }
+    
     // Get face vertex indices
     VtArray<int> faceVertexIndices;
     usdMesh->GetFaceVertexIndicesAttr().Get(&faceVertexIndices);
@@ -231,25 +243,47 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
     bool hasNormals = false;
     UsdAttribute normalsAttr = usdMesh->GetNormalsAttr();
     if (normalsAttr) {
-        hasNormals = normalsAttr.Get(&normals);
+        hasNormals = normalsAttr.Get(&normals) && !normals.empty();
+        if (hasNormals) {
+            std::cout << "    Found normals: " << normals.size() << " normals vs " << points.size() << " vertices" << std::endl;
+            // Check if normals are per-vertex or per-face
+            if (normals.size() != points.size()) {
+                std::cout << "    Warning: Normal count mismatch, will recompute from geometry" << std::endl;
+                hasNormals = false;  // Force recomputation
+            }
+        } else {
+            std::cout << "    No normals available, will compute from faces" << std::endl;
+        }
+    }
+    // Get texture coordinates if available
+    VtArray<GfVec2f> texCoords;
+    bool hasTexCoords = false;
+    UsdGeomPrimvar texCoordsPrimvar = UsdGeomPrimvarsAPI(usdMesh->GetPrim()).GetPrimvar(TfToken("st"));
+    if (texCoordsPrimvar) {
+        hasTexCoords = texCoordsPrimvar.Get(&texCoords) && !texCoords.empty();
     }
 
     // Build vertex data
-    for (size_t i = 0; i < points.size(); i++) {
+    for (size_t i = 0; i < points.size(); i++) 
+    {
         Vertex v;
         
         // Position
         v.position = glm::vec3(points[i][0], points[i][1], points[i][2]);
         
-        // Normal (use existing or default)
+        // Normal (use existing or compute fallback)
         if (hasNormals && i < normals.size()) {
-            v.normal = glm::vec3(normals[i][0], normals[i][1], normals[i][2]);
+            v.normal = glm::normalize(glm::vec3(normals[i][0], normals[i][1], normals[i][2]));
         } else {
-            v.normal = glm::vec3(0.0f, 1.0f, 0.0f);
+            v.normal = glm::vec3(0.0f, 0.0f, 1.0f); // Default normal (Z-up)
         }
         
-        // Texture coordinates (placeholder)
-        v.uv = glm::vec2(0.0f, 0.0f);
+        // Texture coordinates
+        if (hasTexCoords && i < texCoords.size()) {
+            v.uv = glm::vec2(texCoords[i][0], texCoords[i][1]);
+        } else {
+            v.uv = glm::vec2(0.0f, 0.0f);
+        }
         
         vertices.push_back(v);
     }
@@ -285,11 +319,53 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
         faceStart += vertCount;
     }
 
+    // Check if we have valid indices
+    if (indices.empty()) {
+        std::cout << "  Warning: Mesh has no indices after triangulation" << std::endl;
+        return false;
+    }
+
+    // Compute normals if not available or mismatch
+    if (!hasNormals || normals.size() != points.size()) {
+        std::cout << "    Computing normals from face geometry" << std::endl;
+        
+        // Reset normals
+        for (auto& v : vertices) {
+            v.normal = glm::vec3(0.0f);
+        }
+        
+        // Accumulate face normals to vertices
+        for (size_t i = 0; i < indices.size(); i += 3) {
+            uint32_t i0 = indices[i];
+            uint32_t i1 = indices[i + 1];
+            uint32_t i2 = indices[i + 2];
+            
+            glm::vec3 v0 = vertices[i0].position;
+            glm::vec3 v1 = vertices[i1].position;
+            glm::vec3 v2 = vertices[i2].position;
+            
+            glm::vec3 edge1 = v1 - v0;
+            glm::vec3 edge2 = v2 - v0;
+            glm::vec3 faceNormal = glm::normalize(glm::cross(edge1, edge2));
+            
+            vertices[i0].normal += faceNormal;
+            vertices[i1].normal += faceNormal;
+            vertices[i2].normal += faceNormal;
+        }
+        
+        // Normalize vertex normals
+        for (auto& v : vertices) {
+            v.normal = glm::normalize(v.normal);
+        }
+    }
+
     // Create mesh object
     node->mesh = new Mesh(vertices, indices);
 
-    // Create default material if none exists
-    if (!node->material) {
+    // Process material if attached to this mesh
+    pxr::UsdPrim materialPrim = usdMesh->GetPrim();
+    if (!ProcessMaterial(&materialPrim, node)) {
+        // Create default material if none exists
         node->material = Material::CreatePlastic(glm::vec3(0.8f, 0.8f, 0.8f));
     }
 
@@ -396,9 +472,108 @@ bool UsdLoader::ProcessLight(void* lightPtr, Scene* scene) {
     return false;
 }
 
-bool UsdLoader::ProcessMaterial(void* materialPtr, SceneNode* node) {
-    // Material processing can be expanded later
-    // For now, USD materials are complex and would require shader network traversal
+bool UsdLoader::ProcessMaterial(void* primPtr, SceneNode* node) 
+{
+    pxr::UsdPrim* prim = static_cast<pxr::UsdPrim*>(primPtr);
+    if (!prim || !prim->IsValid()) {
+        return false;
+    }
+
+    // Try to find bound material
+    UsdShadeMaterial material = UsdShadeMaterialBindingAPI(*prim).ComputeBoundMaterial();
+    if (!material.GetPrim().IsValid()) {
+        // No material bound, use default
+        return false;
+    }
+
+    // Create a new material object with proper initialization
+    Material* newMaterial = new Material();
+    newMaterial->name = material.GetPrim().GetName().GetString();
+    // Initialize with default PBR values
+    newMaterial->albedo = glm::vec3(0.8f, 0.8f, 0.8f);
+    newMaterial->metallic = 0.0f;
+    newMaterial->roughness = 0.5f;
+    newMaterial->ao = 1.0f;
+    newMaterial->emissive = glm::vec3(0.0f);
+    newMaterial->emissiveStrength = 0.0f;
+    newMaterial->opacity = 1.0f;
+
+    // Get material surface shader
+    UsdShadeShader surfaceShader = material.ComputeSurfaceSource();
+    if (surfaceShader.GetPrim().IsValid()) {
+        // Try to extract parameters from the surface shader
+        // Common parameter names in USD materials
+        
+        // Base color / Albedo - try multiple common names
+        if (UsdAttribute baseColorAttr = surfaceShader.GetInput(TfToken("diffuseColor"))) {
+            GfVec3f baseColor;
+            // Try to get color value (not a texture)
+            if (baseColorAttr.Get(&baseColor)) {
+                newMaterial->albedo = glm::vec3(baseColor[0], baseColor[1], baseColor[2]);
+                std::cout << "    Found base_color attribute" << std::endl;
+            }
+        } 
+
+        // Metallic
+        if (UsdAttribute metallicAttr = surfaceShader.GetInput(TfToken("metallic"))) {
+            float metallic = 0.0f;
+            if (metallicAttr.Get(&metallic)) {
+                newMaterial->metallic = metallic;
+            }
+        }
+
+        // Roughness
+        if (UsdAttribute roughnessAttr = surfaceShader.GetInput(TfToken("roughness"))) {
+            float roughness = 0.5f;
+            if (roughnessAttr.Get(&roughness)) {
+                newMaterial->roughness = roughness;
+            }
+        }
+
+        // Ambient Occlusion
+        if (UsdAttribute aoAttr = surfaceShader.GetInput(TfToken("occlusion"))) {
+            float ao = 1.0f;
+            if (aoAttr.Get(&ao)) {
+                newMaterial->ao = ao;
+            }
+        }
+
+        // Emissive color
+        if (UsdAttribute emissiveAttr = surfaceShader.GetInput(TfToken("emissive"))) {
+            GfVec3f emissive;
+            if (emissiveAttr.Get(&emissive)) {
+                newMaterial->emissive = glm::vec3(emissive[0], emissive[1], emissive[2]);
+            }
+        }
+
+        // Emissive strength / intensity
+        if (UsdAttribute emissiveStrengthAttr = surfaceShader.GetInput(TfToken("emissive_strength"))) {
+            float strength = 0.0f;
+            if (emissiveStrengthAttr.Get(&strength)) {
+                newMaterial->emissiveStrength = strength;
+            }
+        }
+
+        // Opacity
+        if (UsdAttribute opacityAttr = surfaceShader.GetInput(TfToken("opacity"))) {
+            float opacity = 1.0f;
+            if (opacityAttr.Get(&opacity)) {
+                newMaterial->opacity = opacity;
+            }
+        }
+
+        std::cout << "  Loaded material: " << newMaterial->name << std::endl;
+        std::cout << "    Albedo: (" << newMaterial->albedo.r << ", " 
+                  << newMaterial->albedo.g << ", " << newMaterial->albedo.b << ")" << std::endl;
+        std::cout << "    Metallic: " << newMaterial->metallic << ", Roughness: " 
+                  << newMaterial->roughness << std::endl;
+    }
+
+    // Assign material to node
+    if (node->material) {
+        delete node->material;
+    }
+    node->material = newMaterial;
     return true;
 }
 

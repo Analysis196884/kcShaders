@@ -44,14 +44,14 @@ public:
     DirectionalLight();
     ~DirectionalLight() = default;
 
-    glm::vec3 direction = glm::vec3(0.0f, -1.0f, 0.0f);  // Light direction
+    glm::vec3 direction = glm::vec3(0.0f, 0.0f, -1.0f);  // Light direction
     
     // Shadow properties for directional lights
     float shadowDistance = 100.0f;            // Max shadow distance
     float shadowBias = 0.005f;                // Shadow bias to prevent acne
     
     static DirectionalLight* CreateSunlight(
-        const glm::vec3& dir = glm::vec3(-0.3f, -1.0f, -0.5f), 
+        const glm::vec3& dir = glm::vec3(-0.3f, -0.3f, -1.0f), 
         const glm::vec3& color = glm::vec3(1.0f, 0.95f, 0.8f), 
         float intensity = 1.0f
     );
