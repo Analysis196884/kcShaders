@@ -12,13 +12,14 @@
 #define NOMINMAX
 #endif
 
-// Disable Python bindings to avoid linking to boost::python
-#define PXR_PYTHON_SUPPORT_ENABLED 0
-
 // USD includes
 #include <pxr/pxr.h>
 #include <pxr/usd/usd/stage.h>
 #include <pxr/usd/usd/prim.h>
+#include <pxr/usd/sdf/layer.h>
+#include <pxr/usd/sdf/fileFormat.h>
+#include <pxr/base/tf/token.h>
+#include <pxr/base/plug/registry.h>
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdGeom/xformable.h>
@@ -33,16 +34,25 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
-
 #include <glm/gtx/matrix_decompose.hpp>
 
 #include <iostream>
+#include <fstream>
+#include <cstdlib>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace kcShaders {
 
-UsdLoader::UsdLoader() {}
+UsdLoader::UsdLoader() {
+    // Initialize USD plugin registry
+    static bool initialized = false;
+    if (!initialized) {
+        PlugRegistry::GetInstance();
+        initialized = true;
+        std::cout << "USD Plugin Registry initialized" << std::endl;
+    }
+}
 
 UsdLoader::~UsdLoader() {}
 
@@ -52,24 +62,71 @@ bool UsdLoader::LoadFromFile(const std::string& filepath, Scene* outScene) {
         return false;
     }
 
-    // Open the USD stage
-    UsdStageRefPtr stage = UsdStage::Open(filepath);
-    if (!stage) {
-        last_error_ = "Failed to open USD file: " + filepath;
+    // Normalize path separators for USD (use forward slashes)
+    std::string normalizedPath = filepath;
+    for (char& c : normalizedPath) {
+        if (c == '\\') {
+            c = '/';
+        }
+    }
+
+    std::cout << "Opening USD file: " << normalizedPath << std::endl;
+    std::cout << "File path length: " << normalizedPath.length() << " bytes" << std::endl;
+    
+    // Check if file exists
+    std::ifstream testFile(filepath);
+    if (!testFile.good()) {
+        last_error_ = "File does not exist or cannot be accessed: " + filepath;
+        std::cerr << "  Error: Cannot access file" << std::endl;
+        return false;
+    }
+    testFile.close();
+    std::cout << "  File exists and is accessible" << std::endl;
+
+    // Check USD plugin path
+    const char* pluginPath = getenv("PXR_PLUGINPATH");
+    if (pluginPath) {
+        std::cout << "  PXR_PLUGINPATH: " << pluginPath << std::endl;
+    } else {
+        std::cout << "  Warning: PXR_PLUGINPATH not set" << std::endl;
+    }
+
+    // Try to get file format for .usda files
+    auto fileFormat = SdfFileFormat::FindById(TfToken("usda"));
+    if (fileFormat) {
+        std::cout << "  Found USDA file format plugin" << std::endl;
+    } else {
+        std::cout << "  Error: USDA file format plugin not found!" << std::endl;
+        last_error_ = "USD file format plugin not found. Check PXR_PLUGINPATH_NAME";
         return false;
     }
 
-    std::cout << "Successfully opened USD stage: " << filepath << std::endl;
+    // Try to open using SdfLayer first to get better error messages
+    // Convert to const char* to avoid std::string ABI issues between Debug/Release
+    const char* pathCStr = normalizedPath.c_str();
+    
+    std::cout << "  Attempting to open layer with path: " << pathCStr << std::endl;
+    
+    // Try direct Stage::Open which might handle paths better
+    pxr::UsdStageRefPtr stage = pxr::UsdStage::Open(normalizedPath);
+    
+    if (!stage) {
+        last_error_ = "Failed to open USD stage: " + filepath;
+        std::cerr << "  UsdStage::Open failed" << std::endl;
+        return false;
+    }
+
+    std::cout << "Successfully opened USD stage" << std::endl;
 
     // Get the root prim
-    UsdPrim rootPrim = stage->GetPseudoRoot();
+    pxr::UsdPrim rootPrim = stage->GetPseudoRoot();
     if (!rootPrim.IsValid()) {
         last_error_ = "Invalid root prim in USD file";
         return false;
     }
 
     // Traverse the stage and process prims
-    for (const UsdPrim& child : rootPrim.GetChildren()) {
+    for (const pxr::UsdPrim& child : rootPrim.GetChildren()) {
         if (!child.IsValid()) continue;
         
         // Create a root scene node for this prim
@@ -77,7 +134,7 @@ bool UsdLoader::LoadFromFile(const std::string& filepath, Scene* outScene) {
         rootNode->name = child.GetName().GetString();
         
         // Process this prim and its children
-        ProcessPrim(const_cast<UsdPrim*>(&child), rootNode.get(), outScene);
+        ProcessPrim(const_cast<pxr::UsdPrim*>(&child), rootNode.get(), outScene);
         
         // Add to scene
         outScene->roots.push_back(std::move(rootNode));
@@ -88,7 +145,7 @@ bool UsdLoader::LoadFromFile(const std::string& filepath, Scene* outScene) {
 }
 
 bool UsdLoader::ProcessPrim(void* primPtr, SceneNode* parentNode, Scene* scene) {
-    UsdPrim* prim = static_cast<UsdPrim*>(primPtr);
+    pxr::UsdPrim* prim = static_cast<pxr::UsdPrim*>(primPtr);
     if (!prim || !prim->IsValid()) return false;
 
     std::cout << "Processing prim: " << prim->GetPath().GetString() << 
@@ -131,14 +188,14 @@ bool UsdLoader::ProcessPrim(void* primPtr, SceneNode* parentNode, Scene* scene) 
     }
 
     // Process children
-    for (const UsdPrim& child : prim->GetChildren()) {
+    for (const pxr::UsdPrim& child : prim->GetChildren()) {
         if (!child.IsValid()) continue;
         
         auto childNode = std::make_unique<SceneNode>();
         childNode->name = child.GetName().GetString();
         childNode->parent = parentNode;
         
-        ProcessPrim(const_cast<UsdPrim*>(&child), childNode.get(), scene);
+        ProcessPrim(const_cast<pxr::UsdPrim*>(&child), childNode.get(), scene);
         
         parentNode->children.push_back(std::move(childNode));
     }
@@ -240,7 +297,7 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
 }
 
 bool UsdLoader::ProcessLight(void* lightPtr, Scene* scene) {
-    UsdPrim* prim = static_cast<UsdPrim*>(lightPtr);
+    pxr::UsdPrim* prim = static_cast<pxr::UsdPrim*>(lightPtr);
     if (!prim || !prim->IsValid()) return false;
 
     // Get light properties using LightAPI
@@ -259,7 +316,7 @@ bool UsdLoader::ProcessLight(void* lightPtr, Scene* scene) {
     glm::vec3 color(colorAttr[0], colorAttr[1], colorAttr[2]);
 
     // Get transform for position
-    UsdGeomXformable xformable(*prim);
+    pxr::UsdGeomXformable xformable(*prim);
     GfMatrix4d transform;
     bool resetsXformStack;
     xformable.GetLocalTransformation(&transform, &resetsXformStack);

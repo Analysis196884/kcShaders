@@ -7,6 +7,7 @@
 #include "scene/scene.h"
 #include "scene/demo_scene.h"
 #include "scene/camera.h"
+#include "scene/light.h"
 #include "gui/glfw_callbacks.h"
 
 #ifdef ENABLE_USD_SUPPORT
@@ -701,11 +702,42 @@ void App::RenderUI()
         }
         
         // Lights section
-        if (!current_scene_->lights.empty()) {
+        if (!current_scene_->lights.empty() || true) {
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Text("Lights (%zu):", current_scene_->lights.size());
             
+            // Add light button
+            if (ImGui::Button("+ Add Light", ImVec2(150, 36))) {
+                ImGui::OpenPopup("AddLightPopup");
+            }
+            
+            // Light type selection popup
+            if (ImGui::BeginPopup("AddLightPopup")) {
+                if (ImGui::MenuItem("Directional Light")) {
+                    AddLight(LightType::Directional);
+                    ImGui::CloseCurrentPopup();
+                }
+                if (ImGui::MenuItem("Point Light")) {
+                    AddLight(LightType::Point);
+                    ImGui::CloseCurrentPopup();
+                }
+                if (ImGui::MenuItem("Spot Light")) {
+                    AddLight(LightType::Spot);
+                    ImGui::CloseCurrentPopup();
+                }
+                if (ImGui::MenuItem("Area Light")) {
+                    AddLight(LightType::Area);
+                    ImGui::CloseCurrentPopup();
+                }
+                if (ImGui::MenuItem("Ambient Light")) {
+                    AddLight(LightType::Ambient);
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
+            
+            // Display existing lights
             for (size_t i = 0; i < current_scene_->lights.size(); ++i) {
                 Light* light = current_scene_->lights[i];
                 ImGui::PushID(1000 + static_cast<int>(i));
@@ -768,9 +800,13 @@ void App::FramebufferSizeCallback(GLFWwindow* window, int width, int height)
 
 void App::KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
-    // Only handle ESC key here - movement is handled via polling in ProcessKeyboardInput()
-    // to support simultaneous key presses (e.g., W+A for diagonal movement)
-    escape_callback(window, key, scancode, action, mods);
+    // Ctrl + O to open file dialog
+    if (key == GLFW_KEY_O && action == GLFW_PRESS && (mods & GLFW_MOD_CONTROL)) {
+        App* app = static_cast<App*>(glfwGetWindowUserPointer(window));
+        if (app) {
+            app->OpenFileDialog();
+        }
+    }
 }
 
 void App::MouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
@@ -890,6 +926,44 @@ void App::ClearScene()
     }
 }
 
+void App::AddLight(LightType type)
+{
+    if (!current_scene_) {
+        std::cout << "No scene loaded, creating new scene\n";
+        current_scene_ = new Scene();
+    }
+
+    Light* light = nullptr;
+    
+    switch (type) {
+        case LightType::Directional: {
+            light = DirectionalLight::CreateSunlight(glm::vec3(0.0f, -1.0f, -1.0f));
+            break;
+        }
+        case LightType::Point: {
+            light = PointLight::CreateBulb(glm::vec3(5.0f, 5.0f, 5.0f), glm::vec3(1.0f), 10.0f);
+            break;
+        }
+        case LightType::Spot: {
+            light = SpotLight::CreateFlashlight(glm::vec3(5.0f, 5.0f, 5.0f), glm::vec3(0.0f, -1.0f, 0.0f));
+            break;
+        }
+        case LightType::Area: {
+            light = AreaLight::CreatePanel(glm::vec3(0.0f, 5.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f), 2.0f, 2.0f);
+            break;
+        }
+        case LightType::Ambient: {
+            light = AmbientLight::CreateDefault(glm::vec3(0.2f, 0.2f, 0.2f), 0.5f);
+            break;
+        }
+    }
+    
+    if (light) {
+        current_scene_->addLight(light);
+        std::cout << "Light added to scene\n";
+    }
+}
+
 #ifdef ENABLE_USD_SUPPORT
 void App::LoadUsdFile(const std::string& filepath)
 {
@@ -916,12 +990,9 @@ void App::LoadUsdFile(const std::string& filepath)
         }
     } else {
         std::cerr << "Failed to load USD file: " << loader.GetLastError() << "\n";
-        // Load demo scene as fallback
-        LoadDemoScene();
     }
 #else
     std::cerr << "USD support not enabled\n";
-    LoadDemoScene();
 #endif
 }
 

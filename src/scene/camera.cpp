@@ -29,6 +29,22 @@ void Camera::SetPosition(const glm::vec3& position)
 void Camera::SetTarget(const glm::vec3& target)
 {
     target_ = target;
+    
+    // Recalculate yaw and pitch based on the new target
+    glm::vec3 direction = target_ - position_;
+    direction = glm::normalize(direction);
+    
+    // Calculate yaw
+    yaw_ = glm::degrees(atan2(direction.z, direction.x));
+    
+    // Calculate pitch
+    float horizontalDistance = sqrt(direction.x * direction.x + direction.z * direction.z);
+    pitch_ = glm::degrees(atan2(direction.y, horizontalDistance));
+    
+    // Constrain pitch
+    if (pitch_ > 89.0f) pitch_ = 89.0f;
+    if (pitch_ < -89.0f) pitch_ = -89.0f;
+    
     UpdateCameraVectors();
 }
 

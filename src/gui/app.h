@@ -12,6 +12,7 @@ namespace kcShaders {
 class Scene;
 class Renderer;
 class Camera;
+enum class LightType;
 
 class App {
 public:
@@ -47,6 +48,7 @@ private:
     // Scene management
     void LoadDemoScene();
     void ClearScene();
+    void AddLight(LightType type);
 #ifdef ENABLE_USD_SUPPORT
     void LoadUsdFile(const std::string& filepath);
     void OpenFileDialog();

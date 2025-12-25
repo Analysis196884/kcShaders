@@ -7,7 +7,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Ensure consistent MSVC runtime to avoid LNK4098 conflicts between static and dynamic CRT
 if(MSVC)
-    # Remove any existing /MD, /MDd, /MT or /MTd flags if present, then enforce /MD (Release) and /MDd (Debug)
+    # USD libraries are compiled with Release CRT, so we must use /MD for all configurations
+    # to avoid std::string corruption when crossing DLL boundaries
     string(REGEX REPLACE "/MDd?" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
     string(REGEX REPLACE "/MTd?" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
     string(REGEX REPLACE "/MDd?" "" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
@@ -17,10 +18,11 @@ if(MSVC)
     string(REGEX REPLACE "/MDd?" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
     string(REGEX REPLACE "/MTd?" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
 
+    # Always use /MD (Release CRT) even in Debug mode for USD compatibility
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /MD")
-    set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} /MDd")
+    set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} /MD")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MD")
-    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MDd")
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MD")
 endif()
 
 # Collect all source files

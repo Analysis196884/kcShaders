@@ -55,6 +55,11 @@ void SceneNode::collectRenderItems(std::vector<RenderItem>& out) const
 {
     if (mesh) 
     {
+        // Ensure mesh is uploaded to GPU
+        if (!mesh->isUploaded()) {
+            const_cast<Mesh*>(mesh)->upload();
+        }
+        
         RenderItem item;
         item.mesh = mesh;
         item.material = material;
