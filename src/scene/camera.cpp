@@ -3,9 +3,9 @@
 namespace kcShaders {
 
 Camera::Camera(float fov, float aspect_ratio, float near_plane, float far_plane)
-    : position_(glm::vec3(0.0f, 0.0f, 3.0f))
+    : position_(glm::vec3(3.0f, 0.0f, 0.0f))
     , target_(glm::vec3(0.0f, 0.0f, 0.0f))
-    , up_(glm::vec3(0.0f, 1.0f, 0.0f))
+    , up_(glm::vec3(0.0f, 0.0f, 1.0f))
     , yaw_(-90.0f)
     , pitch_(0.0f)
     , fov_(fov)
@@ -31,15 +31,16 @@ void Camera::SetTarget(const glm::vec3& target)
     target_ = target;
     
     // Recalculate yaw and pitch based on the new target
+    // For Z-up coordinate system
     glm::vec3 direction = target_ - position_;
     direction = glm::normalize(direction);
     
-    // Calculate yaw
-    yaw_ = glm::degrees(atan2(direction.z, direction.x));
+    // Calculate yaw (rotation around Z axis in XY plane)
+    yaw_ = glm::degrees(atan2(direction.y, direction.x));
     
-    // Calculate pitch
-    float horizontalDistance = sqrt(direction.x * direction.x + direction.z * direction.z);
-    pitch_ = glm::degrees(atan2(direction.y, horizontalDistance));
+    // Calculate pitch (elevation angle from XY plane)
+    float horizontalDistance = sqrt(direction.x * direction.x + direction.y * direction.y);
+    pitch_ = glm::degrees(atan2(direction.z, horizontalDistance));
     
     // Constrain pitch
     if (pitch_ > 89.0f) pitch_ = 89.0f;
@@ -80,11 +81,17 @@ void Camera::ProcessMouseScroll(float yoffset)
 }
 
 void Camera::UpdateCameraVectors()
-{
+{   
     glm::vec3 front;
-    front.x = cos(glm::radians(yaw_)) * cos(glm::radians(pitch_));
-    front.y = sin(glm::radians(pitch_));
-    front.z = sin(glm::radians(yaw_)) * cos(glm::radians(pitch_));
+    // Calculate front vector in XY plane based on yaw
+    float yaw_rad = glm::radians(yaw_);
+    float pitch_rad = glm::radians(pitch_);
+    
+    // Front vector components
+    front.x = sin(yaw_rad) * cos(pitch_rad);
+    front.y = cos(yaw_rad) * cos(pitch_rad);
+    front.z = sin(pitch_rad);  // Pitch controls vertical component
+    
     front_ = glm::normalize(front);
     right_ = glm::normalize(glm::cross(front_, up_));
 }

@@ -28,18 +28,18 @@ inline Scene* create_demo_scene()
     
     // Add lights to the scene
     // Main directional light (sun)
-    DirectionalLight* sunlight = DirectionalLight::CreateSunlight(glm::vec3(-0.3f, -1.0f, -0.5f));
+    DirectionalLight* sunlight = DirectionalLight::CreateSunlight(glm::vec3(-0.3f, -0.5f, -1.0f));
     sunlight->intensity = 0.8f;
     scene->addLight(sunlight);
     
     // Key point light (warm, above the scene)
-    PointLight* keyLight = PointLight::CreateBulb(glm::vec3(0.0f, 0.0f, 4.0f), glm::vec3(1.0f, 0.9f, 0.7f), 15.0f);
+    PointLight* keyLight = PointLight::CreateBulb(glm::vec3(-2.0f, -2.0f, 3.0f), glm::vec3(1.0f, 0.9f, 0.7f), 15.0f);
     keyLight->name = "Key Light";
     keyLight->intensity = 2.0f;
     scene->addLight(keyLight);
     
     // Fill light (cool, side)
-    PointLight* fillLight = PointLight::CreateBulb(glm::vec3(-2.0f, 2.0f, 2.0f), glm::vec3(0.7f, 0.8f, 1.0f), 12.0f);
+    PointLight* fillLight = PointLight::CreateBulb(glm::vec3(-3.0f, 2.0f, 2.0f), glm::vec3(0.7f, 0.8f, 1.0f), 12.0f);
     fillLight->name = "Fill Light";
     fillLight->intensity = 1.0f;
     scene->addLight(fillLight);
