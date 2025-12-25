@@ -652,7 +652,7 @@ void App::RenderUI()
     ImGui::Separator();
     
     // Scene loading buttons
-    if (ImGui::Button("Load Demo Scene", ImVec2(150, 0))) {
+    if (ImGui::Button("Load Demo Scene", ImVec2(180, 0))) {
         LoadDemoScene();
     }
     
@@ -733,19 +733,37 @@ void App::RenderUI()
                     // Type-specific properties
                     if (light->GetType() == LightType::Point) {
                         PointLight* plight = static_cast<PointLight*>(light);
-                        ImGui::Text("Position: (%.1f, %.1f, %.1f)", 
-                            plight->position.x, plight->position.y, plight->position.z);
-                        ImGui::Text("Radius: %.1f", plight->radius);
+                        ImGui::DragFloat3("Position##point", &plight->position[0], 0.1f);
+                        ImGui::DragFloat("Radius##point", &plight->radius, 0.1f, 0.1f, 100.0f);
+                        ImGui::Text("Attenuation: Const=%.2f, Linear=%.4f, Quad=%.6f",
+                            plight->constant, plight->linear, plight->quadratic);
                     } else if (light->GetType() == LightType::Directional) {
                         DirectionalLight* dlight = static_cast<DirectionalLight*>(light);
-                        ImGui::Text("Direction: (%.2f, %.2f, %.2f)", 
-                            dlight->direction.x, dlight->direction.y, dlight->direction.z);
+                        ImGui::DragFloat3("Direction##dir", &dlight->direction[0], 0.01f, -1.0f, 1.0f);
+                        // Normalize direction after editing
+                        dlight->direction = glm::normalize(dlight->direction);
                     } else if (light->GetType() == LightType::Spot) {
                         SpotLight* slight = static_cast<SpotLight*>(light);
-                        ImGui::Text("Position: (%.1f, %.1f, %.1f)", 
-                            slight->position.x, slight->position.y, slight->position.z);
-                        ImGui::Text("Inner/Outer Angle: %.1f°/%.1f°", 
-                            slight->innerConeAngle, slight->outerConeAngle);
+                        ImGui::DragFloat3("Position##spot", &slight->position[0], 0.1f);
+                        ImGui::DragFloat3("Direction##spot", &slight->direction[0], 0.01f, -1.0f, 1.0f);
+                        // Normalize direction after editing
+                        slight->direction = glm::normalize(slight->direction);
+                        ImGui::SliderFloat("Inner Cone Angle", &slight->innerConeAngle, 0.0f, slight->outerConeAngle);
+                        ImGui::SliderFloat("Outer Cone Angle", &slight->outerConeAngle, slight->innerConeAngle, 180.0f);
+                        ImGui::Text("Attenuation: Const=%.2f, Linear=%.4f, Quad=%.6f",
+                            slight->constant, slight->linear, slight->quadratic);
+                    } else if (light->GetType() == LightType::Area) {
+                        AreaLight* alight = static_cast<AreaLight*>(light);
+                        ImGui::DragFloat3("Position##area", &alight->position[0], 0.1f);
+                        ImGui::DragFloat3("Normal##area", &alight->normal[0], 0.01f, -1.0f, 1.0f);
+                        // Normalize normal after editing
+                        alight->normal = glm::normalize(alight->normal);
+                        ImGui::DragFloat("Width##area", &alight->width, 0.1f, 0.1f, 100.0f);
+                        ImGui::DragFloat("Height##area", &alight->height, 0.1f, 0.1f, 100.0f);
+                    } else if (light->GetType() == LightType::Ambient) {
+                        // Ambient lights don't have position/direction
+                        ImGui::Text("Ambient light properties:");
+                        ImGui::Text("  No position/direction (affects entire scene)");
                     }
                     
                     ImGui::TreePop();
@@ -1036,17 +1054,15 @@ void App::LoadUsdFile(const std::string& filepath)
         std::cerr << "Empty USD file path\n";
         return;
     }
+    
+    ClearScene();
 
     std::cout << "Loading USD file: " << filepath << "\n";
     
-    ClearScene();
     current_scene_ = new Scene();
     
     UsdLoader loader;
     if (loader.LoadFromFile(filepath, current_scene_)) {
-        std::cout << "USD file loaded successfully!\n";
-        std::cout << "Scene has " << current_scene_->roots.size() << " root nodes\n";
-        std::cout << "Scene has " << current_scene_->lights.size() << " lights\n";
         
         // Reset camera to a good viewing position
         if (camera_) {

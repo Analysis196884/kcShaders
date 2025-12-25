@@ -19,7 +19,6 @@
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/sdf/fileFormat.h>
 #include <pxr/base/tf/token.h>
-#include <pxr/base/plug/registry.h>
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdGeom/xformable.h>
@@ -48,13 +47,7 @@ PXR_NAMESPACE_USING_DIRECTIVE
 namespace kcShaders {
 
 UsdLoader::UsdLoader() {
-    // Initialize USD plugin registry
-    static bool initialized = false;
-    if (!initialized) {
-        PlugRegistry::GetInstance();
-        initialized = true;
-        std::cout << "USD Plugin Registry initialized" << std::endl;
-    }
+    // 
 }
 
 UsdLoader::~UsdLoader() {}
@@ -65,17 +58,6 @@ bool UsdLoader::LoadFromFile(const std::string& filepath, Scene* outScene) {
         return false;
     }
 
-    // Normalize path separators for USD (use forward slashes)
-    std::string normalizedPath = filepath;
-    for (char& c : normalizedPath) {
-        if (c == '\\') {
-            c = '/';
-        }
-    }
-
-    std::cout << "Opening USD file: " << normalizedPath << std::endl;
-    std::cout << "File path length: " << normalizedPath.length() << " bytes" << std::endl;
-    
     // Check if file exists
     std::ifstream testFile(filepath);
     if (!testFile.good()) {
@@ -84,33 +66,16 @@ bool UsdLoader::LoadFromFile(const std::string& filepath, Scene* outScene) {
         return false;
     }
     testFile.close();
-    std::cout << "  File exists and is accessible" << std::endl;
 
-    // Check USD plugin path
-    const char* pluginPath = getenv("PXR_PLUGINPATH");
-    if (pluginPath) {
-        std::cout << "  PXR_PLUGINPATH: " << pluginPath << std::endl;
-    } else {
-        std::cout << "  Warning: PXR_PLUGINPATH not set" << std::endl;
+    // Normalize path separators for USD (use forward slashes)
+    std::string normalizedPath = filepath;
+    for (char& c : normalizedPath) {
+        if (c == '\\') {
+            c = '/';
+        }
     }
-
-    // Try to get file format for .usda files
-    auto fileFormat = SdfFileFormat::FindById(TfToken("usda"));
-    if (fileFormat) {
-        std::cout << "  Found USDA file format plugin" << std::endl;
-    } else {
-        std::cout << "  Error: USDA file format plugin not found!" << std::endl;
-        last_error_ = "USD file format plugin not found. Check PXR_PLUGINPATH_NAME";
-        return false;
-    }
-
-    // Try to open using SdfLayer first to get better error messages
-    // Convert to const char* to avoid std::string ABI issues between Debug/Release
-    const char* pathCStr = normalizedPath.c_str();
     
-    std::cout << "  Attempting to open layer with path: " << pathCStr << std::endl;
-    
-    // Try direct Stage::Open which might handle paths better
+    // Open the USD stage
     pxr::UsdStageRefPtr stage = pxr::UsdStage::Open(normalizedPath);
     
     if (!stage) {
@@ -118,8 +83,6 @@ bool UsdLoader::LoadFromFile(const std::string& filepath, Scene* outScene) {
         std::cerr << "  UsdStage::Open failed" << std::endl;
         return false;
     }
-
-    std::cout << "Successfully opened USD stage" << std::endl;
 
     // Get the root prim
     pxr::UsdPrim rootPrim = stage->GetPseudoRoot();
@@ -177,9 +140,6 @@ bool UsdLoader::ProcessPrim(void* primPtr, SceneNode* parentNode, Scene* scene) 
         parentNode->transform.position = position;
         parentNode->transform.scale = scale;
         parentNode->transform.rotation = glm::degrees(glm::eulerAngles(rotation));
-        
-        std::cout << "  Transform - Position: (" << position.x << ", " << position.y << ", " << position.z << ")"
-                  << " Scale: (" << scale.x << ", " << scale.y << ", " << scale.z << ")" << std::endl;
     }
 
     // Handle mesh geometry - attach directly to this node
@@ -231,30 +191,10 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
     VtArray<int> faceVertexCounts;
     usdMesh->GetFaceVertexCountsAttr().Get(&faceVertexCounts);
 
-    std::cout << "  Mesh has " << points.size() << " vertices, " 
-              << faceVertexCounts.size() << " faces" << std::endl;
-
     // Convert to our mesh format
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
-
-    // Get normals if available
-    VtArray<GfVec3f> normals;
-    bool hasNormals = false;
-    UsdAttribute normalsAttr = usdMesh->GetNormalsAttr();
-    if (normalsAttr) {
-        hasNormals = normalsAttr.Get(&normals) && !normals.empty();
-        if (hasNormals) {
-            std::cout << "    Found normals: " << normals.size() << " normals vs " << points.size() << " vertices" << std::endl;
-            // Check if normals are per-vertex or per-face
-            if (normals.size() != points.size()) {
-                std::cout << "    Warning: Normal count mismatch, will recompute from geometry" << std::endl;
-                hasNormals = false;  // Force recomputation
-            }
-        } else {
-            std::cout << "    No normals available, will compute from faces" << std::endl;
-        }
-    }
+    
     // Get texture coordinates if available
     VtArray<GfVec2f> texCoords;
     bool hasTexCoords = false;
@@ -263,7 +203,7 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
         hasTexCoords = texCoordsPrimvar.Get(&texCoords) && !texCoords.empty();
     }
 
-    // Build vertex data
+    // Build vertex data - initialize with default values, normals will be computed from faces
     for (size_t i = 0; i < points.size(); i++) 
     {
         Vertex v;
@@ -271,12 +211,8 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
         // Position
         v.position = glm::vec3(points[i][0], points[i][1], points[i][2]);
         
-        // Normal (use existing or compute fallback)
-        if (hasNormals && i < normals.size()) {
-            v.normal = glm::normalize(glm::vec3(normals[i][0], normals[i][1], normals[i][2]));
-        } else {
-            v.normal = glm::vec3(0.0f, 0.0f, 1.0f); // Default normal (Z-up)
-        }
+        // Normal will be computed from face geometry
+        v.normal = glm::vec3(0.0f); // Will accumulate face normals
         
         // Texture coordinates
         if (hasTexCoords && i < texCoords.size()) {
@@ -290,6 +226,7 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
 
     // Build indices - triangulate if needed
     size_t faceStart = 0;
+    
     for (size_t faceIdx = 0; faceIdx < faceVertexCounts.size(); faceIdx++) {
         int vertCount = faceVertexCounts[faceIdx];
         
@@ -299,7 +236,7 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
             indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 1]));
             indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 2]));
         } else if (vertCount == 4) {
-            // Quad - triangulate
+            // Quad - triangulate into 2 triangles
             indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 0]));
             indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 1]));
             indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 2]));
@@ -308,11 +245,15 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
             indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 2]));
             indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 3]));
         } else {
-            // N-gon - simple fan triangulation
+            // N-gon - fan triangulation
+            uint32_t idx0 = static_cast<uint32_t>(faceVertexIndices[faceStart + 0]);
             for (int i = 1; i < vertCount - 1; i++) {
-                indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 0]));
-                indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + i]));
-                indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + i + 1]));
+                uint32_t idx1 = static_cast<uint32_t>(faceVertexIndices[faceStart + i]);
+                uint32_t idx2 = static_cast<uint32_t>(faceVertexIndices[faceStart + i + 1]);
+                
+                indices.push_back(idx0);
+                indices.push_back(idx1);
+                indices.push_back(idx2);
             }
         }
         
@@ -324,39 +265,34 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
         std::cout << "  Warning: Mesh has no indices after triangulation" << std::endl;
         return false;
     }
-
-    // Compute normals if not available or mismatch
-    if (!hasNormals || normals.size() != points.size()) {
-        std::cout << "    Computing normals from face geometry" << std::endl;
+    
+    // Reset normals
+    for (auto& v : vertices) {
+        v.normal = glm::vec3(0.0f);
+    }
+    
+    // Accumulate face normals to vertices
+    for (size_t i = 0; i < indices.size(); i += 3) {
+        uint32_t i0 = indices[i];
+        uint32_t i1 = indices[i + 1];
+        uint32_t i2 = indices[i + 2];
         
-        // Reset normals
-        for (auto& v : vertices) {
-            v.normal = glm::vec3(0.0f);
-        }
+        glm::vec3 v0 = vertices[i0].position;
+        glm::vec3 v1 = vertices[i1].position;
+        glm::vec3 v2 = vertices[i2].position;
         
-        // Accumulate face normals to vertices
-        for (size_t i = 0; i < indices.size(); i += 3) {
-            uint32_t i0 = indices[i];
-            uint32_t i1 = indices[i + 1];
-            uint32_t i2 = indices[i + 2];
-            
-            glm::vec3 v0 = vertices[i0].position;
-            glm::vec3 v1 = vertices[i1].position;
-            glm::vec3 v2 = vertices[i2].position;
-            
-            glm::vec3 edge1 = v1 - v0;
-            glm::vec3 edge2 = v2 - v0;
-            glm::vec3 faceNormal = glm::normalize(glm::cross(edge1, edge2));
-            
-            vertices[i0].normal += faceNormal;
-            vertices[i1].normal += faceNormal;
-            vertices[i2].normal += faceNormal;
-        }
+        glm::vec3 edge1 = v1 - v0;
+        glm::vec3 edge2 = v2 - v0;
+        glm::vec3 faceNormal = glm::normalize(glm::cross(edge1, edge2));
         
-        // Normalize vertex normals
-        for (auto& v : vertices) {
-            v.normal = glm::normalize(v.normal);
-        }
+        vertices[i0].normal += faceNormal;
+        vertices[i1].normal += faceNormal;
+        vertices[i2].normal += faceNormal;
+    }
+    
+    // Normalize vertex normals
+    for (auto& v : vertices) {
+        v.normal = glm::normalize(v.normal);
     }
 
     // Create mesh object
@@ -408,9 +344,8 @@ bool UsdLoader::ProcessLight(void* lightPtr, Scene* scene) {
     // Create appropriate light type
     if (prim->IsA<UsdLuxDistantLight>()) {
         // Directional light
-        glm::vec3 direction(0.0f, -1.0f, 0.0f);  // Default direction
+        glm::vec3 direction(0.0f, -1.0f, 0.0f);
         
-        // USD distant lights point in -Z direction by default
         // Manually convert GfMatrix4d to glm::mat4
         glm::mat4 glmTransform;
         for (int i = 0; i < 4; i++) {
@@ -502,7 +437,6 @@ bool UsdLoader::ProcessMaterial(void* primPtr, SceneNode* node)
     UsdShadeShader surfaceShader = material.ComputeSurfaceSource();
     if (surfaceShader.GetPrim().IsValid()) {
         // Try to extract parameters from the surface shader
-        // Common parameter names in USD materials
         
         // Base color / Albedo - try multiple common names
         if (UsdAttribute baseColorAttr = surfaceShader.GetInput(TfToken("diffuseColor"))) {
@@ -510,9 +444,13 @@ bool UsdLoader::ProcessMaterial(void* primPtr, SceneNode* node)
             // Try to get color value (not a texture)
             if (baseColorAttr.Get(&baseColor)) {
                 newMaterial->albedo = glm::vec3(baseColor[0], baseColor[1], baseColor[2]);
-                std::cout << "    Found base_color attribute" << std::endl;
             }
-        } 
+        } else if (UsdAttribute baseColorAttr = surfaceShader.GetInput(TfToken("base_color"))) {
+            GfVec3f baseColor;
+            if (baseColorAttr.Get(&baseColor)) {
+                newMaterial->albedo = glm::vec3(baseColor[0], baseColor[1], baseColor[2]);
+            }
+        }
 
         // Metallic
         if (UsdAttribute metallicAttr = surfaceShader.GetInput(TfToken("metallic"))) {
@@ -561,12 +499,6 @@ bool UsdLoader::ProcessMaterial(void* primPtr, SceneNode* node)
                 newMaterial->opacity = opacity;
             }
         }
-
-        std::cout << "  Loaded material: " << newMaterial->name << std::endl;
-        std::cout << "    Albedo: (" << newMaterial->albedo.r << ", " 
-                  << newMaterial->albedo.g << ", " << newMaterial->albedo.b << ")" << std::endl;
-        std::cout << "    Metallic: " << newMaterial->metallic << ", Roughness: " 
-                  << newMaterial->roughness << std::endl;
     }
 
     // Assign material to node
