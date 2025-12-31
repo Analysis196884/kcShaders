@@ -10,6 +10,7 @@
 namespace kcShaders {
     class Scene;
     class SceneNode;
+    class TextureManager;
 }
 
 namespace kcShaders {

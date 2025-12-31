@@ -49,6 +49,14 @@ struct SpotLight {
 uniform Material material;
 uniform vec3 viewPos;
 
+// Texture samplers (0 = no texture)
+uniform sampler2D albedoMap;
+uniform sampler2D metallicMap;
+uniform sampler2D roughnessMap;
+uniform sampler2D normalMap;
+uniform sampler2D aoMap;
+uniform sampler2D emissiveMap;
+
 // Light arrays
 #define MAX_DIR_LIGHTS 4
 #define MAX_POINT_LIGHTS 8
@@ -110,13 +118,13 @@ float geometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
 }
 
 // Calculate lighting contribution for a single light
-vec3 calculateLighting(vec3 L, vec3 radiance, vec3 N, vec3 V, vec3 F0)
+vec3 calculateLighting(vec3 L, vec3 radiance, vec3 N, vec3 V, vec3 F0, float roughness, float metallic, vec3 albedo)
 {
     vec3 H = normalize(V + L);
     
     // Cook-Torrance BRDF
-    float NDF = distributionGGX(N, H, material.roughness);
-    float G = geometrySmith(N, V, L, material.roughness);
+    float NDF = distributionGGX(N, H, roughness);
+    float G = geometrySmith(N, V, L, roughness);
     vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);
     
     vec3 numerator = NDF * G * F;
@@ -126,22 +134,22 @@ vec3 calculateLighting(vec3 L, vec3 radiance, vec3 N, vec3 V, vec3 F0)
     // Energy conservation
     vec3 kS = F;
     vec3 kD = vec3(1.0) - kS;
-    kD *= 1.0 - material.metallic;
+    kD *= 1.0 - metallic;
     
     float NdotL = max(dot(N, L), 0.0);
-    return (kD * material.albedo / PI + specular) * radiance * NdotL;
+    return (kD * albedo / PI + specular) * radiance * NdotL;
 }
 
 // Calculate directional light contribution
-vec3 calcDirectionalLight(DirectionalLight light, vec3 N, vec3 V, vec3 F0)
+vec3 calcDirectionalLight(DirectionalLight light, vec3 N, vec3 V, vec3 F0, float roughness, float metallic, vec3 albedo)
 {
     vec3 L = normalize(-light.direction);
     vec3 radiance = light.color * light.intensity;
-    return calculateLighting(L, radiance, N, V, F0);
+    return calculateLighting(L, radiance, N, V, F0, roughness, metallic, albedo);
 }
 
 // Calculate point light contribution
-vec3 calcPointLight(PointLight light, vec3 N, vec3 V, vec3 F0)
+vec3 calcPointLight(PointLight light, vec3 N, vec3 V, vec3 F0, float roughness, float metallic, vec3 albedo)
 {
     vec3 L = normalize(light.position - FragPos);
     float dist = length(light.position - FragPos);
@@ -156,11 +164,11 @@ vec3 calcPointLight(PointLight light, vec3 N, vec3 V, vec3 F0)
     }
     
     vec3 radiance = light.color * light.intensity * attenuation;
-    return calculateLighting(L, radiance, N, V, F0);
+    return calculateLighting(L, radiance, N, V, F0, roughness, metallic, albedo);
 }
 
 // Calculate spot light contribution
-vec3 calcSpotLight(SpotLight light, vec3 N, vec3 V, vec3 F0)
+vec3 calcSpotLight(SpotLight light, vec3 N, vec3 V, vec3 F0, float roughness, float metallic, vec3 albedo)
 {
     vec3 L = normalize(light.position - FragPos);
     float dist = length(light.position - FragPos);
@@ -179,7 +187,7 @@ vec3 calcSpotLight(SpotLight light, vec3 N, vec3 V, vec3 F0)
     attenuation *= spotIntensity;
     
     vec3 radiance = light.color * light.intensity * attenuation;
-    return calculateLighting(L, radiance, N, V, F0);
+    return calculateLighting(L, radiance, N, V, F0, roughness, metallic, albedo);
 }
 
 void main()
@@ -187,35 +195,76 @@ void main()
     vec3 N = normalize(Normal);
     vec3 V = normalize(viewPos - FragPos);
     
+    // Sample textures and override material properties
+    vec3 albedo = material.albedo;
+    float metallic = material.metallic;
+    float roughness = material.roughness;
+    float ao = material.ao;
+    vec3 emissive = material.emissive;
+    float emissiveStrength = material.emissiveStrength;
+    
+    // Albedo texture (RGB)
+    // vec4 albedoSample = texture(albedoMap, TexCoord);
+    // if (albedoSample.a > 0.0) {  // Check if texture is bound (non-zero alpha)
+    //     albedo = albedoSample.rgb;
+    // }
+    
+    // Metallic texture (R channel, grayscale)
+    vec4 metallicSample = texture(metallicMap, TexCoord);
+    if (metallicSample.r > 0.0 || length(metallicSample.rgb) > 0.0) {  // Check if texture is bound
+        metallic = metallicSample.r;
+    }
+    
+    // Roughness texture (R channel, grayscale)
+    vec4 roughnessSample = texture(roughnessMap, TexCoord);
+    if (roughnessSample.r > 0.0 || length(roughnessSample.rgb) > 0.0) {  // Check if texture is bound
+        roughness = roughnessSample.r;
+    }
+    
+    // AO texture (R channel, grayscale)
+    vec4 aoSample = texture(aoMap, TexCoord);
+    if (aoSample.r > 0.0 || length(aoSample.rgb) > 0.0) {  // Check if texture is bound
+        ao = aoSample.r;
+    }
+    
+    // Emissive texture (RGB)
+    vec4 emissiveSample = texture(emissiveMap, TexCoord);
+    if (length(emissiveSample.rgb) > 0.0) {  // Check if texture is bound
+        emissive = emissiveSample.rgb;
+    }
+    
+    // Normal map (TBN transformation needed - for now use as-is)
+    // TODO: Implement proper normal mapping with TBN matrix
+    
     // Calculate reflectance at normal incidence
     vec3 F0 = vec3(0.04); 
-    F0 = mix(F0, material.albedo, material.metallic);
+    F0 = mix(F0, albedo, metallic);
     
     // Accumulate lighting from all sources
     vec3 Lo = vec3(0.0);
     
     // Directional lights
     for (int i = 0; i < numDirLights && i < MAX_DIR_LIGHTS; i++) {
-        Lo += calcDirectionalLight(dirLights[i], N, V, F0);
+        Lo += calcDirectionalLight(dirLights[i], N, V, F0, roughness, metallic, albedo);
     }
     
     // Point lights
     for (int i = 0; i < numPointLights && i < MAX_POINT_LIGHTS; i++) {
-        Lo += calcPointLight(pointLights[i], N, V, F0);
+        Lo += calcPointLight(pointLights[i], N, V, F0, roughness, metallic, albedo);
     }
     
     // Spot lights
     for (int i = 0; i < numSpotLights && i < MAX_SPOT_LIGHTS; i++) {
-        Lo += calcSpotLight(spotLights[i], N, V, F0);
+        Lo += calcSpotLight(spotLights[i], N, V, F0, roughness, metallic, albedo);
     }
     
     // Ambient lighting
-    vec3 ambient = ambientLight * material.albedo * material.ao;
+    vec3 ambient = ambientLight * albedo * ao;
     
-    // Emissive
-    vec3 emissive = material.emissive * material.emissiveStrength;
+    // Emissive is already sampled above
+    vec3 finalEmissive = emissive * emissiveStrength;
     
-    vec3 color = ambient + Lo + emissive;
+    vec3 color = ambient + Lo + finalEmissive;
     
     // HDR tonemapping (simple Reinhard)
     color = color / (color + vec3(1.0));

@@ -6,6 +6,7 @@
 #include "scene/mesh.h"
 #include "scene/material.h"
 #include "scene/light.h"
+#include "scene/texture.h"
 
 // Define this before including USD headers to avoid Windows.h conflicts
 #ifndef NOMINMAX
@@ -18,6 +19,7 @@
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/sdf/fileFormat.h>
+#include <pxr/usd/sdf/assetPath.h>
 #include <pxr/base/tf/token.h>
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/xform.h>
@@ -44,7 +46,20 @@
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
+using namespace kcShaders;
+using SdfAssetPath = pxr::SdfAssetPath;
+using UsdAttribute = pxr::UsdAttribute;
+using GfVec3f = pxr::GfVec3f;
+using TfToken = pxr::TfToken;
+using UsdPrim = pxr::UsdPrim;
+using UsdShadeMaterial = pxr::UsdShadeMaterial;
+using UsdShadeMaterialBindingAPI = pxr::UsdShadeMaterialBindingAPI;
+using UsdShadeShader = pxr::UsdShadeShader;
+
 namespace kcShaders {
+
+// Global texture manager for USD material loading
+static TextureManager g_textureManager;
 
 UsdLoader::UsdLoader() {
     // 
@@ -451,12 +466,32 @@ bool UsdLoader::ProcessMaterial(void* primPtr, SceneNode* node)
                 newMaterial->albedo = glm::vec3(baseColor[0], baseColor[1], baseColor[2]);
             }
         }
+        
+        // Try to load albedo texture if available
+        if (UsdAttribute albedoTexAttr = surfaceShader.GetInput(TfToken("diffuseColor"))) {
+            SdfAssetPath assetPath;
+            if (albedoTexAttr.Get(&assetPath)) {
+                std::string texturePath = assetPath.GetAssetPath();
+                if (!texturePath.empty()) {
+                    newMaterial->albedoMap = g_textureManager.loadTexture(texturePath);
+                }
+            }
+        }
 
         // Metallic
         if (UsdAttribute metallicAttr = surfaceShader.GetInput(TfToken("metallic"))) {
             float metallic = 0.0f;
             if (metallicAttr.Get(&metallic)) {
                 newMaterial->metallic = metallic;
+            } else {
+                // Try to load metallic texture
+                SdfAssetPath assetPath;
+                if (metallicAttr.Get(&assetPath)) {
+                    std::string texturePath = assetPath.GetAssetPath();
+                    if (!texturePath.empty()) {
+                        newMaterial->metallicMap = g_textureManager.loadTexture(texturePath);
+                    }
+                }
             }
         }
 
@@ -465,6 +500,15 @@ bool UsdLoader::ProcessMaterial(void* primPtr, SceneNode* node)
             float roughness = 0.5f;
             if (roughnessAttr.Get(&roughness)) {
                 newMaterial->roughness = roughness;
+            } else {
+                // Try to load roughness texture
+                SdfAssetPath assetPath;
+                if (roughnessAttr.Get(&assetPath)) {
+                    std::string texturePath = assetPath.GetAssetPath();
+                    if (!texturePath.empty()) {
+                        newMaterial->roughnessMap = g_textureManager.loadTexture(texturePath);
+                    }
+                }
             }
         }
 
@@ -473,6 +517,26 @@ bool UsdLoader::ProcessMaterial(void* primPtr, SceneNode* node)
             float ao = 1.0f;
             if (aoAttr.Get(&ao)) {
                 newMaterial->ao = ao;
+            } else {
+                // Try to load AO texture
+                SdfAssetPath assetPath;
+                if (aoAttr.Get(&assetPath)) {
+                    std::string texturePath = assetPath.GetAssetPath();
+                    if (!texturePath.empty()) {
+                        newMaterial->aoMap = g_textureManager.loadTexture(texturePath);
+                    }
+                }
+            }
+        }
+
+        // Normal map
+        if (UsdAttribute normalAttr = surfaceShader.GetInput(TfToken("normal"))) {
+            SdfAssetPath assetPath;
+            if (normalAttr.Get(&assetPath)) {
+                std::string texturePath = assetPath.GetAssetPath();
+                if (!texturePath.empty()) {
+                    newMaterial->normalMap = g_textureManager.loadTexture(texturePath);
+                }
             }
         }
 
@@ -481,6 +545,15 @@ bool UsdLoader::ProcessMaterial(void* primPtr, SceneNode* node)
             GfVec3f emissive;
             if (emissiveAttr.Get(&emissive)) {
                 newMaterial->emissive = glm::vec3(emissive[0], emissive[1], emissive[2]);
+            } else {
+                // Try to load emissive texture
+                SdfAssetPath assetPath;
+                if (emissiveAttr.Get(&assetPath)) {
+                    std::string texturePath = assetPath.GetAssetPath();
+                    if (!texturePath.empty()) {
+                        newMaterial->emissiveMap = g_textureManager.loadTexture(texturePath);
+                    }
+                }
             }
         }
 

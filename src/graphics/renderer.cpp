@@ -364,6 +364,58 @@ void Renderer::render_scene(Scene* scene, Camera* camera)
                 if (locOpacity >= 0) {
                     glUniform1f(locOpacity, item.material->opacity);
                 }
+                
+                // Set texture samplers (bind textures to texture units)
+                // Texture unit 0: Albedo map
+                GLint locAlbedoMap = glGetUniformLocation(shader_program_, "albedoMap");
+                if (locAlbedoMap >= 0) {
+                    glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D, item.material->albedoMap);
+                    glUniform1i(locAlbedoMap, 0);
+                }
+                
+                // Texture unit 1: Metallic map
+                GLint locMetallicMap = glGetUniformLocation(shader_program_, "metallicMap");
+                if (locMetallicMap >= 0) {
+                    glActiveTexture(GL_TEXTURE1);
+                    glBindTexture(GL_TEXTURE_2D, item.material->metallicMap);
+                    glUniform1i(locMetallicMap, 1);
+                }
+                
+                // Texture unit 2: Roughness map
+                GLint locRoughnessMap = glGetUniformLocation(shader_program_, "roughnessMap");
+                if (locRoughnessMap >= 0) {
+                    glActiveTexture(GL_TEXTURE2);
+                    glBindTexture(GL_TEXTURE_2D, item.material->roughnessMap);
+                    glUniform1i(locRoughnessMap, 2);
+                }
+                
+                // Texture unit 3: Normal map
+                GLint locNormalMap = glGetUniformLocation(shader_program_, "normalMap");
+                if (locNormalMap >= 0) {
+                    glActiveTexture(GL_TEXTURE3);
+                    glBindTexture(GL_TEXTURE_2D, item.material->normalMap);
+                    glUniform1i(locNormalMap, 3);
+                }
+                
+                // Texture unit 4: AO map
+                GLint locAOMap = glGetUniformLocation(shader_program_, "aoMap");
+                if (locAOMap >= 0) {
+                    glActiveTexture(GL_TEXTURE4);
+                    glBindTexture(GL_TEXTURE_2D, item.material->aoMap);
+                    glUniform1i(locAOMap, 4);
+                }
+                
+                // Texture unit 5: Emissive map
+                GLint locEmissiveMap = glGetUniformLocation(shader_program_, "emissiveMap");
+                if (locEmissiveMap >= 0) {
+                    glActiveTexture(GL_TEXTURE5);
+                    glBindTexture(GL_TEXTURE_2D, item.material->emissiveMap);
+                    glUniform1i(locEmissiveMap, 5);
+                }
+                
+                // Reset active texture unit
+                glActiveTexture(GL_TEXTURE0);
             } else {
                 // Use default material values if no material is assigned
                 GLint locAlbedo = glGetUniformLocation(shader_program_, "material.albedo");

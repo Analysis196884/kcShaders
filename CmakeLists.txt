@@ -117,7 +117,7 @@ add_library(glad ${CMAKE_SOURCE_DIR}/external/glad/src/glad.c)
 target_include_directories(glad PUBLIC ${CMAKE_SOURCE_DIR}/external/glad/include)
 target_link_libraries(glad PUBLIC OpenGL::GL)
 
-# Add ImGui as a library (without add_subdirectory)
+# Add ImGui as a library
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/external/imgui)
 if(EXISTS "${IMGUI_DIR}")
     set(IMGUI_SOURCES
@@ -141,6 +141,18 @@ if(EXISTS "${IMGUI_DIR}")
     target_compile_definitions(imgui PUBLIC IMGUI_IMPL_OPENGL_LOADER_GLAD)
 else()
     message(WARNING "ImGui submodule not found. Run 'git submodule update --init --recursive'")
+endif()
+
+# Add stb as a library
+set(STB_DIR ${CMAKE_SOURCE_DIR}/external/stb)
+if(EXISTS "${STB_DIR}")
+    add_library(stb INTERFACE)
+    
+    target_include_directories(stb INTERFACE
+        ${STB_DIR}
+    )
+else()
+    message(WARNING "stb submodule not found. Run 'git submodule update --init --recursive'")
 endif()
 
 # Create executable
@@ -169,6 +181,7 @@ target_link_libraries(kcShaders PRIVATE
     glm::glm
     glad
     imgui
+    stb
 )
 
 # Link USD libraries if found
