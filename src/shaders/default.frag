@@ -3,6 +3,7 @@
 in vec3 FragPos;
 in vec3 Normal;
 in vec2 TexCoord;
+in mat3 TBN;
 
 out vec4 FragColor;
 
@@ -198,10 +199,28 @@ vec3 calcSpotLight(SpotLight light, vec3 N, vec3 V, vec3 F0, float roughness, fl
     return calculateLighting(L, radiance, N, V, F0, roughness, metallic, albedo);
 }
 
+// Normal mapping helper function
+vec3 applyNormalMapping(vec3 N, vec3 normalSample)
+{
+    // Normalize the sampled normal (from [0,1] to [-1,1])
+    normalSample = normalize(normalSample * 2.0 - 1.0);
+    
+    // Transform normal from tangent space to world space using TBN
+    vec3 mappedNormal = normalize(TBN * normalSample);
+    
+    return mappedNormal;
+}
+
 void main()
 {
     vec3 N = normalize(Normal);
     vec3 V = normalize(viewPos - FragPos);
+    
+    // Apply normal mapping if available
+    if (hasNormalMap) {
+        vec3 normalSample = texture(normalMap, TexCoord).rgb;
+        N = applyNormalMapping(N, normalSample);
+    }
     
     // Sample textures and override material properties
     vec3 albedo = material.albedo;
@@ -240,9 +259,6 @@ void main()
         vec4 emissiveSample = texture(emissiveMap, TexCoord);
         emissive = emissiveSample.rgb;
     }
-    
-    // Normal map (TBN transformation needed - for now use as-is)
-    // TODO: Implement proper normal mapping with TBN matrix
     
     // Calculate reflectance at normal incidence
     vec3 F0 = vec3(0.04); 
