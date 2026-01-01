@@ -72,7 +72,7 @@ bool Texture::loadFromFile(const std::string& filepath) {
 
     stbi_image_free(data);
 
-    std::cout << "Loaded texture: " << filepath << " (" << width_ << "x" << height_ << ")" << std::endl;
+    // std::cout << "Loaded texture: " << filepath << " (" << width_ << "x" << height_ << ")" << std::endl;
     return true;
 }
 

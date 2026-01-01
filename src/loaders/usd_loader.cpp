@@ -106,7 +106,6 @@ static std::string GetTexturePathFromShader(const UsdShadeShader& shader) {
                     texPath = std::filesystem::path(g_usdFileDirectory) / texPath;
                     path = texPath.string();
                 }
-                std::cout << "    Found texture file: " << path << std::endl;
                 return path;
             }
         }
@@ -119,42 +118,34 @@ static std::string GetTexturePathFromShader(const UsdShadeShader& shader) {
 // Follows the pattern: input.connect = </path/to/TextureShader.outputs:rgb>
 static std::string GetTexturePathFromConnectedInput(const UsdShadeInput& input) {
     if (!input) {
-        std::cout << "    Input is invalid" << std::endl;
+        std::cerr << "    Input is invalid" << std::endl;
         return "";
     }
 
     // Get all sources connected to this input
     UsdShadeSourceInfoVector sources = input.GetConnectedSources();
-    std::cout << "    Found " << sources.size() << " connected sources" << std::endl;
     
     for (const auto& sourceInfo : sources) {
-        std::cout << "    Checking source: " << sourceInfo.source.GetPrim().GetPath() << std::endl;
-        
         // Get the shader that's connected
         UsdShadeShader connectedShader(sourceInfo.source.GetPrim());
         if (connectedShader.GetPrim().IsValid()) {
-            std::cout << "      Connected shader is valid" << std::endl;
-            
             // Check if it's a UVTexture shader by checking the info:id attribute
             UsdAttribute idAttr = connectedShader.GetPrim().GetAttribute(TfToken("info:id"));
             if (idAttr) {
                 TfToken idValue;
                 if (idAttr.Get(&idValue)) {
-                    std::cout << "      Shader type: " << idValue << std::endl;
                     if (idValue == TfToken("UsdUVTexture")) {
-                        std::cout << "      Found UsdUVTexture shader!" << std::endl;
                         return GetTexturePathFromShader(connectedShader);
                     }
                 }
             } else {
-                std::cout << "      No info:id attribute found" << std::endl;
+                std::cerr << "      No info:id attribute found" << std::endl;
             }
         } else {
-            std::cout << "      Connected shader is invalid" << std::endl;
+            std::cerr << "      Connected shader is invalid" << std::endl;
         }
     }
 
-    std::cout << "    No valid texture shader found in connections" << std::endl;
     return "";
 }
 
@@ -195,7 +186,6 @@ bool UsdLoader::LoadFromFile(const std::string& filepath, Scene* outScene) {
     // Store the directory of the USD file for resolving relative texture paths
     std::filesystem::path usdPath(filepath);
     g_usdFileDirectory = usdPath.parent_path().string();
-    std::cout << "USD file directory: " << g_usdFileDirectory << std::endl;
 
     // Check if file exists
     std::ifstream testFile(filepath);
@@ -346,7 +336,6 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
             // Check if normals are face-varying
             TfToken interpolation = usdMesh->GetNormalsInterpolation();
             normalsAreFaceVarying = (interpolation == UsdGeomTokens->faceVarying);
-            std::cout << "  Found " << normals.size() << " normals (interpolation: " << interpolation << ")" << std::endl;
         }
     }
     
@@ -371,10 +360,10 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
             TfToken interpolation = texCoordsPrimvar.GetInterpolation();
             isFaceVarying = (interpolation == UsdGeomTokens->faceVarying);
             
-            std::cout << "  Found " << texCoords.size() << " texture coordinates" << std::endl;
-            std::cout << "    Primvar: " << texCoordsPrimvar.GetPrimvarName() << std::endl;
-            std::cout << "    Interpolation: " << interpolation << std::endl;
-            std::cout << "    Face-varying: " << (isFaceVarying ? "yes" : "no") << std::endl;
+            // std::cout << "  Found " << texCoords.size() << " texture coordinates" << std::endl;
+            // std::cout << "    Primvar: " << texCoordsPrimvar.GetPrimvarName() << std::endl;
+            // std::cout << "    Interpolation: " << interpolation << std::endl;
+            // std::cout << "    Face-varying: " << (isFaceVarying ? "yes" : "no") << std::endl;
         }
     }
     
@@ -396,7 +385,6 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
         // Texture coordinates (only for vertex-varying, face-varying will be handled later)
         if (hasTexCoords && !isFaceVarying && i < texCoords.size()) {
             v.uv = glm::vec2(texCoords[i][0], texCoords[i][1]);
-            std::cout << "  Vertex " << i << " UV: (" << v.uv.x << ", " << v.uv.y << ")" << std::endl;
         } else {
             v.uv = glm::vec2(0.0f, 0.0f);
         }
@@ -411,7 +399,6 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
     
     if (hasTexCoords && isFaceVarying) {
         // Face-varying: need to duplicate vertices for unique UV combinations
-        std::cout << "  Processing face-varying UVs..." << std::endl;
         vertices.clear(); // Clear and rebuild with duplicated vertices
         
         for (size_t faceIdx = 0; faceIdx < faceVertexCounts.size(); faceIdx++) {
@@ -506,7 +493,7 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
 
     // Check if we have valid indices
     if (indices.empty()) {
-        std::cout << "  Warning: Mesh has no indices after triangulation" << std::endl;
+        std::cerr << "  Warning: Mesh has no indices after triangulation" << std::endl;
         return false;
     }
     
@@ -603,6 +590,10 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
 
     // Create mesh object
     node->mesh = new Mesh(vertices, indices);
+    node->mesh->setName(usdMesh->GetPrim().GetName().GetString());
+    
+    // Store original face count (before triangulation)
+    node->mesh->setFaceCount(static_cast<uint32_t>(faceVertexCounts.size()));
 
     // Process material if attached to this mesh
     pxr::UsdPrim materialPrim = usdMesh->GetPrim();
@@ -759,27 +750,18 @@ bool UsdLoader::ProcessMaterial(void* primPtr, SceneNode* node)
         }
         
         // Try to load albedo texture from connected shader
-        std::cout << "  Checking for albedo texture..." << std::endl;
         if (UsdShadeInput diffuseColorInput = surfaceShader.GetInput(TfToken("diffuseColor"))) {
             std::string texturePath;
             
             // Try to follow the connection to find the texture shader
-            std::cout << "  Following diffuseColor connection..." << std::endl;
             texturePath = GetTexturePathFromConnectedInput(diffuseColorInput);
             
-            // Fallback: try to find DiffuseTexture by name (not recommended but as backup)
-            if (texturePath.empty()) {
-                std::cout << "  Connection failed, trying to find DiffuseTexture by name..." << std::endl;
-                texturePath = GetConnectedTexturePath(surfaceShader, "DiffuseTexture");
-            }
-            
             if (!texturePath.empty()) {
-                std::cout << "  Loading albedo texture: " << texturePath << std::endl;
                 GLuint texId = g_textureManager.loadTexture(texturePath);
                 newMaterial->albedoMap = texId;
                 std::cout << "  Albedo texture loaded with ID: " << texId << std::endl;
             } else {
-                std::cout << "  No albedo texture found" << std::endl;
+                // std::cerr << "  No albedo texture found" << std::endl;
             }
         }
 
@@ -835,27 +817,18 @@ bool UsdLoader::ProcessMaterial(void* primPtr, SceneNode* node)
         }
 
         // Try to load normal map from connected shader
-        std::cout << "  Checking for normal texture..." << std::endl;
         if (UsdShadeInput normalInput = surfaceShader.GetInput(TfToken("normal"))) {
             std::string texturePath;
             
             // Try to follow the connection to find the texture shader
-            std::cout << "  Following normal connection..." << std::endl;
             texturePath = GetTexturePathFromConnectedInput(normalInput);
             
-            // Fallback: try to find NormalTexture by name (not recommended but as backup)
-            if (texturePath.empty()) {
-                std::cout << "  Connection failed, trying to find NormalTexture by name..." << std::endl;
-                texturePath = GetConnectedTexturePath(surfaceShader, "NormalTexture");
-            }
-            
             if (!texturePath.empty()) {
-                std::cout << "  Loading normal texture: " << texturePath << std::endl;
                 GLuint texId = g_textureManager.loadTexture(texturePath);
                 newMaterial->normalMap = texId;
                 std::cout << "  Normal texture loaded with ID: " << texId << std::endl;
             } else {
-                std::cout << "  No normal texture found" << std::endl;
+                std::cerr << "  No normal texture found" << std::endl;
             }
         }
 

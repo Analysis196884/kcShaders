@@ -38,6 +38,7 @@ public:
     void setVertices(const std::vector<Vertex>& vertices);
     void setIndices(const std::vector<uint32_t>& indices);
     void setName(const std::string& name) { this->name_ = name; }
+    void setFaceCount(uint32_t count) { this->face_count_ = count; }
 
     // GPU upload
     void upload();
@@ -50,6 +51,7 @@ public:
     uint32_t indexCount() const { return static_cast<uint32_t>(indices.size()); }
     uint32_t GetIndexCount() const { return indexCount(); }
     uint32_t GetVertexCount() const { return static_cast<uint32_t>(vertices.size()); }
+    uint32_t GetFaceCount() const { return face_count_; }
     std::string name() const { return this->name_; };
 
 private:
@@ -61,6 +63,7 @@ private:
     std::vector<uint32_t> indices;
 
     std::string name_ = "Unnamed Mesh";
+    uint32_t face_count_ = 0;  // Original face count before triangulation
 
     // GPU-side objects
     GLuint vao = 0;

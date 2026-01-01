@@ -1016,19 +1016,69 @@ void App::DisplaySceneNodeTree(SceneNode* node, int nodeIndex)
         // Display mesh info
         if (node->mesh) {
             ImGui::Text("Mesh: %s", node->mesh->name().c_str());
-            ImGui::Text("  Vertices: %zu, Indices: %zu", 
-                node->mesh->GetVertexCount(), 
-                node->mesh->GetIndexCount());
+            uint32_t faceCount = node->mesh->GetFaceCount();
+            if (faceCount > 0) {
+                // Show original face count
+                ImGui::Text("  Vertices: %zu, Faces: %u", 
+                    node->mesh->GetVertexCount(), 
+                    faceCount);
+            } else {
+                // Fallback to triangulated face count if original not set
+                size_t triangulatedFaces = node->mesh->GetIndexCount() / 3;
+                ImGui::Text("  Vertices: %zu, Faces: %zu (triangulated)", 
+                    node->mesh->GetVertexCount(), 
+                    triangulatedFaces);
+            }
         }
         
         // Display material info
         if (node->material) {
-            ImGui::Text("Material: %s", node->material->name.c_str());
-            ImGui::Indent();
-            ImGui::ColorEdit3("Albedo##mat", &node->material->albedo[0], ImGuiColorEditFlags_NoInputs);
-            ImGui::Text("Metallic: %.2f", node->material->metallic);
-            ImGui::Text("Roughness: %.2f", node->material->roughness);
-            ImGui::Unindent();
+            bool material_open = ImGui::TreeNode("Material", "Material: %s", node->material->name.c_str());
+            if (material_open) {
+                ImGui::Indent();
+                
+                // Display albedo (color or texture)
+                if (node->material->albedoMap != 0) {
+                    ImGui::Text("Albedo: Texture (ID: %u)", node->material->albedoMap);
+                    // Show texture preview (64x64 pixels)
+                    ImGui::Image((void*)(intptr_t)node->material->albedoMap, ImVec2(64, 64));
+                } else {
+                    ImGui::ColorEdit3("Albedo##mat", &node->material->albedo[0], ImGuiColorEditFlags_NoInputs);
+                }
+                
+                // Display metallic (value or texture)
+                if (node->material->metallicMap != 0) {
+                    ImGui::Text("Metallic: Texture (ID: %u)", node->material->metallicMap);
+                    ImGui::Image((void*)(intptr_t)node->material->metallicMap, ImVec2(64, 64));
+                } else {
+                    ImGui::Text("Metallic: %.2f", node->material->metallic);
+                }
+                
+                // Display roughness (value or texture)
+                if (node->material->roughnessMap != 0) {
+                    ImGui::Text("Roughness: Texture (ID: %u)", node->material->roughnessMap);
+                    ImGui::Image((void*)(intptr_t)node->material->roughnessMap, ImVec2(64, 64));
+                } else {
+                    ImGui::Text("Roughness: %.2f", node->material->roughness);
+                }
+                
+                // Display other texture maps if present
+                if (node->material->normalMap != 0) {
+                    ImGui::Text("Normal Map: Texture (ID: %u)", node->material->normalMap);
+                    ImGui::Image((void*)(intptr_t)node->material->normalMap, ImVec2(64, 64));
+                }
+                if (node->material->aoMap != 0) {
+                    ImGui::Text("AO Map: Texture (ID: %u)", node->material->aoMap);
+                    ImGui::Image((void*)(intptr_t)node->material->aoMap, ImVec2(64, 64));
+                }
+                if (node->material->emissiveMap != 0) {
+                    ImGui::Text("Emissive Map: Texture (ID: %u)", node->material->emissiveMap);
+                    ImGui::Image((void*)(intptr_t)node->material->emissiveMap, ImVec2(64, 64));
+                }
+                
+                ImGui::Unindent();
+                ImGui::TreePop();
+            }
         }
         
         // Display children recursively

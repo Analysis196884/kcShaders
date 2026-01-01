@@ -28,6 +28,8 @@ Mesh& Mesh::operator=(Mesh&& other) noexcept
 
         vertices = std::move(other.vertices);
         indices  = std::move(other.indices);
+        name_ = std::move(other.name_);
+        face_count_ = other.face_count_;
 
         vao = other.vao;
         vbo = other.vbo;
@@ -36,6 +38,7 @@ Mesh& Mesh::operator=(Mesh&& other) noexcept
 
         other.vao = other.vbo = other.ebo = 0;
         other.uploaded = false;
+        other.face_count_ = 0;
     }
     return *this;
 }
