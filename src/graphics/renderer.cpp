@@ -368,50 +368,74 @@ void Renderer::render_scene(Scene* scene, Camera* camera)
                 // Set texture samplers (bind textures to texture units)
                 // Texture unit 0: Albedo map
                 GLint locAlbedoMap = glGetUniformLocation(shader_program_, "albedoMap");
+                GLint locHasAlbedoMap = glGetUniformLocation(shader_program_, "hasAlbedoMap");
                 if (locAlbedoMap >= 0) {
                     glActiveTexture(GL_TEXTURE0);
                     glBindTexture(GL_TEXTURE_2D, item.material->albedoMap);
                     glUniform1i(locAlbedoMap, 0);
                 }
+                if (locHasAlbedoMap >= 0) {
+                    glUniform1i(locHasAlbedoMap, item.material->albedoMap != 0 ? 1 : 0);
+                }
                 
                 // Texture unit 1: Metallic map
                 GLint locMetallicMap = glGetUniformLocation(shader_program_, "metallicMap");
+                GLint locHasMetallicMap = glGetUniformLocation(shader_program_, "hasMetallicMap");
                 if (locMetallicMap >= 0) {
                     glActiveTexture(GL_TEXTURE1);
                     glBindTexture(GL_TEXTURE_2D, item.material->metallicMap);
                     glUniform1i(locMetallicMap, 1);
                 }
+                if (locHasMetallicMap >= 0) {
+                    glUniform1i(locHasMetallicMap, item.material->metallicMap != 0 ? 1 : 0);
+                }
                 
                 // Texture unit 2: Roughness map
                 GLint locRoughnessMap = glGetUniformLocation(shader_program_, "roughnessMap");
+                GLint locHasRoughnessMap = glGetUniformLocation(shader_program_, "hasRoughnessMap");
                 if (locRoughnessMap >= 0) {
                     glActiveTexture(GL_TEXTURE2);
                     glBindTexture(GL_TEXTURE_2D, item.material->roughnessMap);
                     glUniform1i(locRoughnessMap, 2);
                 }
+                if (locHasRoughnessMap >= 0) {
+                    glUniform1i(locHasRoughnessMap, item.material->roughnessMap != 0 ? 1 : 0);
+                }
                 
                 // Texture unit 3: Normal map
                 GLint locNormalMap = glGetUniformLocation(shader_program_, "normalMap");
+                GLint locHasNormalMap = glGetUniformLocation(shader_program_, "hasNormalMap");
                 if (locNormalMap >= 0) {
                     glActiveTexture(GL_TEXTURE3);
                     glBindTexture(GL_TEXTURE_2D, item.material->normalMap);
                     glUniform1i(locNormalMap, 3);
                 }
+                if (locHasNormalMap >= 0) {
+                    glUniform1i(locHasNormalMap, item.material->normalMap != 0 ? 1 : 0);
+                }
                 
                 // Texture unit 4: AO map
                 GLint locAOMap = glGetUniformLocation(shader_program_, "aoMap");
+                GLint locHasAOMap = glGetUniformLocation(shader_program_, "hasAOMap");
                 if (locAOMap >= 0) {
                     glActiveTexture(GL_TEXTURE4);
                     glBindTexture(GL_TEXTURE_2D, item.material->aoMap);
                     glUniform1i(locAOMap, 4);
                 }
+                if (locHasAOMap >= 0) {
+                    glUniform1i(locHasAOMap, item.material->aoMap != 0 ? 1 : 0);
+                }
                 
                 // Texture unit 5: Emissive map
                 GLint locEmissiveMap = glGetUniformLocation(shader_program_, "emissiveMap");
+                GLint locHasEmissiveMap = glGetUniformLocation(shader_program_, "hasEmissiveMap");
                 if (locEmissiveMap >= 0) {
                     glActiveTexture(GL_TEXTURE5);
                     glBindTexture(GL_TEXTURE_2D, item.material->emissiveMap);
                     glUniform1i(locEmissiveMap, 5);
+                }
+                if (locHasEmissiveMap >= 0) {
+                    glUniform1i(locHasEmissiveMap, item.material->emissiveMap != 0 ? 1 : 0);
                 }
                 
                 // Reset active texture unit

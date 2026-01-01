@@ -57,6 +57,14 @@ uniform sampler2D normalMap;
 uniform sampler2D aoMap;
 uniform sampler2D emissiveMap;
 
+// Flags to indicate if textures are bound
+uniform bool hasAlbedoMap;
+uniform bool hasMetallicMap;
+uniform bool hasRoughnessMap;
+uniform bool hasNormalMap;
+uniform bool hasAOMap;
+uniform bool hasEmissiveMap;
+
 // Light arrays
 #define MAX_DIR_LIGHTS 4
 #define MAX_POINT_LIGHTS 8
@@ -204,32 +212,32 @@ void main()
     float emissiveStrength = material.emissiveStrength;
     
     // Albedo texture (RGB)
-    // vec4 albedoSample = texture(albedoMap, TexCoord);
-    // if (albedoSample.a > 0.0) {  // Check if texture is bound (non-zero alpha)
-    //     albedo = albedoSample.rgb;
-    // }
+    if (hasAlbedoMap) {
+        vec4 albedoSample = texture(albedoMap, TexCoord);
+        albedo = albedoSample.rgb;
+    }
     
     // Metallic texture (R channel, grayscale)
-    vec4 metallicSample = texture(metallicMap, TexCoord);
-    if (metallicSample.r > 0.0 || length(metallicSample.rgb) > 0.0) {  // Check if texture is bound
+    if (hasMetallicMap) {
+        vec4 metallicSample = texture(metallicMap, TexCoord);
         metallic = metallicSample.r;
     }
     
     // Roughness texture (R channel, grayscale)
-    vec4 roughnessSample = texture(roughnessMap, TexCoord);
-    if (roughnessSample.r > 0.0 || length(roughnessSample.rgb) > 0.0) {  // Check if texture is bound
+    if (hasRoughnessMap) {
+        vec4 roughnessSample = texture(roughnessMap, TexCoord);
         roughness = roughnessSample.r;
     }
     
     // AO texture (R channel, grayscale)
-    vec4 aoSample = texture(aoMap, TexCoord);
-    if (aoSample.r > 0.0 || length(aoSample.rgb) > 0.0) {  // Check if texture is bound
+    if (hasAOMap) {
+        vec4 aoSample = texture(aoMap, TexCoord);
         ao = aoSample.r;
     }
     
     // Emissive texture (RGB)
-    vec4 emissiveSample = texture(emissiveMap, TexCoord);
-    if (length(emissiveSample.rgb) > 0.0) {  // Check if texture is bound
+    if (hasEmissiveMap) {
+        vec4 emissiveSample = texture(emissiveMap, TexCoord);
         emissive = emissiveSample.rgb;
     }
     

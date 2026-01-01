@@ -8,6 +8,29 @@
 #include "scene/light.h"
 #include "scene/texture.h"
 
+#include <unordered_map>
+
+// Hash function for glm::vec3 to use in unordered_map
+namespace std {
+    template<>
+    struct hash<glm::vec3> {
+        size_t operator()(const glm::vec3& v) const {
+            size_t h1 = hash<float>()(v.x);
+            size_t h2 = hash<float>()(v.y);
+            size_t h3 = hash<float>()(v.z);
+            return h1 ^ (h2 << 1) ^ (h3 << 2);
+        }
+    };
+    
+    template<>
+    struct equal_to<glm::vec3> {
+        bool operator()(const glm::vec3& a, const glm::vec3& b) const {
+            const float epsilon = 0.0001f;
+            return glm::length(a - b) < epsilon;
+        }
+    };
+}
+
 // Define this before including USD headers to avoid Windows.h conflicts
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -43,6 +66,7 @@
 #include <iostream>
 #include <fstream>
 #include <cstdlib>
+#include <filesystem>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -61,6 +85,101 @@ namespace kcShaders {
 // Global texture manager for USD material loading
 static TextureManager g_textureManager;
 
+// Global USD file directory for resolving relative texture paths
+static std::string g_usdFileDirectory;
+
+// Helper function to get texture file path from a connected shader
+static std::string GetTexturePathFromShader(const UsdShadeShader& shader) {
+    if (!shader.GetPrim().IsValid()) {
+        return "";
+    }
+    
+    // Try to get the file input from the texture shader
+    if (UsdAttribute fileAttr = shader.GetInput(TfToken("file"))) {
+        SdfAssetPath assetPath;
+        if (fileAttr.Get(&assetPath)) {
+            std::string path = assetPath.GetAssetPath();
+            if (!path.empty()) {
+                // If it's a relative path, resolve it relative to the USD file directory
+                std::filesystem::path texPath(path);
+                if (texPath.is_relative() && !g_usdFileDirectory.empty()) {
+                    texPath = std::filesystem::path(g_usdFileDirectory) / texPath;
+                    path = texPath.string();
+                }
+                std::cout << "    Found texture file: " << path << std::endl;
+                return path;
+            }
+        }
+    }
+    
+    return "";
+}
+
+// Helper function to get texture path from connected input
+// Follows the pattern: input.connect = </path/to/TextureShader.outputs:rgb>
+static std::string GetTexturePathFromConnectedInput(const UsdShadeInput& input) {
+    if (!input) {
+        std::cout << "    Input is invalid" << std::endl;
+        return "";
+    }
+
+    // Get all sources connected to this input
+    UsdShadeSourceInfoVector sources = input.GetConnectedSources();
+    std::cout << "    Found " << sources.size() << " connected sources" << std::endl;
+    
+    for (const auto& sourceInfo : sources) {
+        std::cout << "    Checking source: " << sourceInfo.source.GetPrim().GetPath() << std::endl;
+        
+        // Get the shader that's connected
+        UsdShadeShader connectedShader(sourceInfo.source.GetPrim());
+        if (connectedShader.GetPrim().IsValid()) {
+            std::cout << "      Connected shader is valid" << std::endl;
+            
+            // Check if it's a UVTexture shader by checking the info:id attribute
+            UsdAttribute idAttr = connectedShader.GetPrim().GetAttribute(TfToken("info:id"));
+            if (idAttr) {
+                TfToken idValue;
+                if (idAttr.Get(&idValue)) {
+                    std::cout << "      Shader type: " << idValue << std::endl;
+                    if (idValue == TfToken("UsdUVTexture")) {
+                        std::cout << "      Found UsdUVTexture shader!" << std::endl;
+                        return GetTexturePathFromShader(connectedShader);
+                    }
+                }
+            } else {
+                std::cout << "      No info:id attribute found" << std::endl;
+            }
+        } else {
+            std::cout << "      Connected shader is invalid" << std::endl;
+        }
+    }
+
+    std::cout << "    No valid texture shader found in connections" << std::endl;
+    return "";
+}
+
+// Helper function to find connected texture shaders by name
+static std::string GetConnectedTexturePath(const UsdShadeShader& surfaceShader, const std::string& textureName) {
+    if (!surfaceShader.GetPrim().IsValid()) {
+        return "";
+    }
+    
+    // Get the parent material prim
+    UsdPrim materialPrim = surfaceShader.GetPrim().GetParent();
+    if (!materialPrim.IsValid()) {
+        return "";
+    }
+    
+    // Look for a child shader with the given name
+    UsdPrim textureShaderPrim = materialPrim.GetChild(TfToken(textureName));
+    if (textureShaderPrim.IsValid()) {
+        UsdShadeShader textureShader(textureShaderPrim);
+        return GetTexturePathFromShader(textureShader);
+    }
+    
+    return "";
+}
+
 UsdLoader::UsdLoader() {
     // 
 }
@@ -72,6 +191,11 @@ bool UsdLoader::LoadFromFile(const std::string& filepath, Scene* outScene) {
         last_error_ = "Output scene is null";
         return false;
     }
+
+    // Store the directory of the USD file for resolving relative texture paths
+    std::filesystem::path usdPath(filepath);
+    g_usdFileDirectory = usdPath.parent_path().string();
+    std::cout << "USD file directory: " << g_usdFileDirectory << std::endl;
 
     // Check if file exists
     std::ifstream testFile(filepath);
@@ -210,12 +334,52 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     
+    // Get normals if available
+    VtArray<GfVec3f> normals;
+    bool hasNormals = false;
+    bool normalsAreFaceVarying = false;
+    
+    UsdAttribute normalsAttr = usdMesh->GetNormalsAttr();
+    if (normalsAttr) {
+        hasNormals = normalsAttr.Get(&normals) && !normals.empty();
+        if (hasNormals) {
+            // Check if normals are face-varying
+            TfToken interpolation = usdMesh->GetNormalsInterpolation();
+            normalsAreFaceVarying = (interpolation == UsdGeomTokens->faceVarying);
+            std::cout << "  Found " << normals.size() << " normals (interpolation: " << interpolation << ")" << std::endl;
+        }
+    }
+    
     // Get texture coordinates if available
     VtArray<GfVec2f> texCoords;
     bool hasTexCoords = false;
+    bool isFaceVarying = false;
+    
     UsdGeomPrimvar texCoordsPrimvar = UsdGeomPrimvarsAPI(usdMesh->GetPrim()).GetPrimvar(TfToken("st"));
+    if (!texCoordsPrimvar) {
+        // Try alternative UV primvar names
+        texCoordsPrimvar = UsdGeomPrimvarsAPI(usdMesh->GetPrim()).GetPrimvar(TfToken("UVMap"));
+    }
+    if (!texCoordsPrimvar) {
+        texCoordsPrimvar = UsdGeomPrimvarsAPI(usdMesh->GetPrim()).GetPrimvar(TfToken("uv"));
+    }
+    
     if (texCoordsPrimvar) {
         hasTexCoords = texCoordsPrimvar.Get(&texCoords) && !texCoords.empty();
+        if (hasTexCoords) {
+            // Check interpolation mode
+            TfToken interpolation = texCoordsPrimvar.GetInterpolation();
+            isFaceVarying = (interpolation == UsdGeomTokens->faceVarying);
+            
+            std::cout << "  Found " << texCoords.size() << " texture coordinates" << std::endl;
+            std::cout << "    Primvar: " << texCoordsPrimvar.GetPrimvarName() << std::endl;
+            std::cout << "    Interpolation: " << interpolation << std::endl;
+            std::cout << "    Face-varying: " << (isFaceVarying ? "yes" : "no") << std::endl;
+        }
+    }
+    
+    if (!hasTexCoords) {
+        std::cout << "  Warning: No texture coordinates found" << std::endl;
     }
 
     // Build vertex data - initialize with default values, normals will be computed from faces
@@ -229,9 +393,10 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
         // Normal will be computed from face geometry
         v.normal = glm::vec3(0.0f); // Will accumulate face normals
         
-        // Texture coordinates
-        if (hasTexCoords && i < texCoords.size()) {
+        // Texture coordinates (only for vertex-varying, face-varying will be handled later)
+        if (hasTexCoords && !isFaceVarying && i < texCoords.size()) {
             v.uv = glm::vec2(texCoords[i][0], texCoords[i][1]);
+            std::cout << "  Vertex " << i << " UV: (" << v.uv.x << ", " << v.uv.y << ")" << std::endl;
         } else {
             v.uv = glm::vec2(0.0f, 0.0f);
         }
@@ -240,39 +405,103 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
     }
 
     // Build indices - triangulate if needed
+    // For face-varying UVs, we need to duplicate vertices
     size_t faceStart = 0;
+    size_t uvIndex = 0;
     
-    for (size_t faceIdx = 0; faceIdx < faceVertexCounts.size(); faceIdx++) {
-        int vertCount = faceVertexCounts[faceIdx];
+    if (hasTexCoords && isFaceVarying) {
+        // Face-varying: need to duplicate vertices for unique UV combinations
+        std::cout << "  Processing face-varying UVs..." << std::endl;
+        vertices.clear(); // Clear and rebuild with duplicated vertices
         
-        if (vertCount == 3) {
-            // Triangle - add directly
-            indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 0]));
-            indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 1]));
-            indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 2]));
-        } else if (vertCount == 4) {
-            // Quad - triangulate into 2 triangles
-            indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 0]));
-            indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 1]));
-            indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 2]));
+        for (size_t faceIdx = 0; faceIdx < faceVertexCounts.size(); faceIdx++) {
+            int vertCount = faceVertexCounts[faceIdx];
             
-            indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 0]));
-            indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 2]));
-            indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 3]));
-        } else {
-            // N-gon - fan triangulation
-            uint32_t idx0 = static_cast<uint32_t>(faceVertexIndices[faceStart + 0]);
-            for (int i = 1; i < vertCount - 1; i++) {
-                uint32_t idx1 = static_cast<uint32_t>(faceVertexIndices[faceStart + i]);
-                uint32_t idx2 = static_cast<uint32_t>(faceVertexIndices[faceStart + i + 1]);
+            // For each vertex in this face, create a new vertex with correct UV
+            std::vector<uint32_t> faceIndices;
+            for (int i = 0; i < vertCount; i++) {
+                int posIdx = faceVertexIndices[faceStart + i];
                 
-                indices.push_back(idx0);
-                indices.push_back(idx1);
-                indices.push_back(idx2);
+                Vertex v;
+                v.position = glm::vec3(points[posIdx][0], points[posIdx][1], points[posIdx][2]);
+                
+                // Get normal from face-varying array if available
+                if (hasNormals && normalsAreFaceVarying && uvIndex < normals.size()) {
+                    v.normal = glm::vec3(normals[uvIndex][0], normals[uvIndex][1], normals[uvIndex][2]);
+                } else {
+                    v.normal = glm::vec3(0.0f); // Will calculate later
+                }
+                
+                // Get UV from face-varying array
+                if (uvIndex < texCoords.size()) {
+                    v.uv = glm::vec2(texCoords[uvIndex][0], texCoords[uvIndex][1]);
+                } else {
+                    v.uv = glm::vec2(0.0f, 0.0f);
+                }
+                
+                vertices.push_back(v);
+                faceIndices.push_back(static_cast<uint32_t>(vertices.size() - 1));
+                uvIndex++;
             }
+            
+            // Triangulate this face
+            if (vertCount == 3) {
+                indices.push_back(faceIndices[0]);
+                indices.push_back(faceIndices[1]);
+                indices.push_back(faceIndices[2]);
+            } else if (vertCount == 4) {
+                indices.push_back(faceIndices[0]);
+                indices.push_back(faceIndices[1]);
+                indices.push_back(faceIndices[2]);
+                
+                indices.push_back(faceIndices[0]);
+                indices.push_back(faceIndices[2]);
+                indices.push_back(faceIndices[3]);
+            } else {
+                // N-gon fan triangulation
+                for (int i = 1; i < vertCount - 1; i++) {
+                    indices.push_back(faceIndices[0]);
+                    indices.push_back(faceIndices[i]);
+                    indices.push_back(faceIndices[i + 1]);
+                }
+            }
+            
+            faceStart += vertCount;
         }
-        
-        faceStart += vertCount;
+    } else {
+        // Vertex-varying or no UVs: use original vertex indexing
+        for (size_t faceIdx = 0; faceIdx < faceVertexCounts.size(); faceIdx++) {
+            int vertCount = faceVertexCounts[faceIdx];
+            
+            if (vertCount == 3) {
+                // Triangle - add directly
+                indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 0]));
+                indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 1]));
+                indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 2]));
+            } else if (vertCount == 4) {
+                // Quad - triangulate into 2 triangles
+                indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 0]));
+                indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 1]));
+                indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 2]));
+                
+                indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 0]));
+                indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 2]));
+                indices.push_back(static_cast<uint32_t>(faceVertexIndices[faceStart + 3]));
+            } else {
+                // N-gon - fan triangulation
+                uint32_t idx0 = static_cast<uint32_t>(faceVertexIndices[faceStart + 0]);
+                for (int i = 1; i < vertCount - 1; i++) {
+                    uint32_t idx1 = static_cast<uint32_t>(faceVertexIndices[faceStart + i]);
+                    uint32_t idx2 = static_cast<uint32_t>(faceVertexIndices[faceStart + i + 1]);
+                    
+                    indices.push_back(idx0);
+                    indices.push_back(idx1);
+                    indices.push_back(idx2);
+                }
+            }
+            
+            faceStart += vertCount;
+        }
     }
 
     // Check if we have valid indices
@@ -281,33 +510,95 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
         return false;
     }
     
-    // Reset normals
-    for (auto& v : vertices) {
-        v.normal = glm::vec3(0.0f);
+    // Calculate normals if we don't have them from USD
+    bool needsCalculatedNormals = true;
+    if (hasNormals) {
+        // Check if any normal is still zero (meaning it wasn't set from USD data)
+        needsCalculatedNormals = false;
+        for (const auto& v : vertices) {
+            if (glm::length(v.normal) < 0.001f) {
+                needsCalculatedNormals = true;
+                break;
+            }
+        }
     }
     
-    // Accumulate face normals to vertices
-    for (size_t i = 0; i < indices.size(); i += 3) {
-        uint32_t i0 = indices[i];
-        uint32_t i1 = indices[i + 1];
-        uint32_t i2 = indices[i + 2];
+    if (needsCalculatedNormals) {
+        std::cout << "  Calculating normals from geometry..." << std::endl;
         
-        glm::vec3 v0 = vertices[i0].position;
-        glm::vec3 v1 = vertices[i1].position;
-        glm::vec3 v2 = vertices[i2].position;
-        
-        glm::vec3 edge1 = v1 - v0;
-        glm::vec3 edge2 = v2 - v0;
-        glm::vec3 faceNormal = glm::normalize(glm::cross(edge1, edge2));
-        
-        vertices[i0].normal += faceNormal;
-        vertices[i1].normal += faceNormal;
-        vertices[i2].normal += faceNormal;
-    }
-    
-    // Normalize vertex normals
-    for (auto& v : vertices) {
-        v.normal = glm::normalize(v.normal);
+        // For face-varying vertices, we need to smooth normals by position
+        if (hasTexCoords && isFaceVarying) {
+            // Build a map of position -> normal accumulation
+            std::unordered_map<glm::vec3, glm::vec3> positionNormals;
+            std::unordered_map<glm::vec3, int> positionCounts;
+            
+            // First pass: calculate face normals and accumulate by position
+            for (size_t i = 0; i < indices.size(); i += 3) {
+                uint32_t i0 = indices[i];
+                uint32_t i1 = indices[i + 1];
+                uint32_t i2 = indices[i + 2];
+                
+                glm::vec3 p0 = vertices[i0].position;
+                glm::vec3 p1 = vertices[i1].position;
+                glm::vec3 p2 = vertices[i2].position;
+                
+                glm::vec3 edge1 = p1 - p0;
+                glm::vec3 edge2 = p2 - p0;
+                glm::vec3 faceNormal = glm::normalize(glm::cross(edge1, edge2));
+                
+                // Accumulate to each unique position
+                positionNormals[p0] += faceNormal;
+                positionNormals[p1] += faceNormal;
+                positionNormals[p2] += faceNormal;
+                positionCounts[p0]++;
+                positionCounts[p1]++;
+                positionCounts[p2]++;
+            }
+            
+            // Normalize accumulated normals
+            for (auto& [pos, normal] : positionNormals) {
+                positionNormals[pos] = glm::normalize(normal);
+            }
+            
+            // Second pass: assign smoothed normals to all vertices at each position
+            for (auto& v : vertices) {
+                v.normal = positionNormals[v.position];
+            }
+        } else {
+            // Vertex-varying: use standard per-vertex normal calculation
+            // Reset normals
+            for (auto& v : vertices) {
+                v.normal = glm::vec3(0.0f);
+            }
+            
+            // Accumulate face normals to vertices
+            for (size_t i = 0; i < indices.size(); i += 3) {
+                uint32_t i0 = indices[i];
+                uint32_t i1 = indices[i + 1];
+                uint32_t i2 = indices[i + 2];
+                
+                glm::vec3 v0 = vertices[i0].position;
+                glm::vec3 v1 = vertices[i1].position;
+                glm::vec3 v2 = vertices[i2].position;
+                
+                glm::vec3 edge1 = v1 - v0;
+                glm::vec3 edge2 = v2 - v0;
+                glm::vec3 faceNormal = glm::normalize(glm::cross(edge1, edge2));
+                
+                vertices[i0].normal += faceNormal;
+                vertices[i1].normal += faceNormal;
+                vertices[i2].normal += faceNormal;
+            }
+            
+            // Normalize vertex normals
+            for (auto& v : vertices) {
+                if (glm::length(v.normal) > 0.001f) {
+                    v.normal = glm::normalize(v.normal);
+                } else {
+                    v.normal = glm::vec3(0.0f, 1.0f, 0.0f);
+                }
+            }
+        }
     }
 
     // Create mesh object
@@ -467,14 +758,28 @@ bool UsdLoader::ProcessMaterial(void* primPtr, SceneNode* node)
             }
         }
         
-        // Try to load albedo texture if available
-        if (UsdAttribute albedoTexAttr = surfaceShader.GetInput(TfToken("diffuseColor"))) {
-            SdfAssetPath assetPath;
-            if (albedoTexAttr.Get(&assetPath)) {
-                std::string texturePath = assetPath.GetAssetPath();
-                if (!texturePath.empty()) {
-                    newMaterial->albedoMap = g_textureManager.loadTexture(texturePath);
-                }
+        // Try to load albedo texture from connected shader
+        std::cout << "  Checking for albedo texture..." << std::endl;
+        if (UsdShadeInput diffuseColorInput = surfaceShader.GetInput(TfToken("diffuseColor"))) {
+            std::string texturePath;
+            
+            // Try to follow the connection to find the texture shader
+            std::cout << "  Following diffuseColor connection..." << std::endl;
+            texturePath = GetTexturePathFromConnectedInput(diffuseColorInput);
+            
+            // Fallback: try to find DiffuseTexture by name (not recommended but as backup)
+            if (texturePath.empty()) {
+                std::cout << "  Connection failed, trying to find DiffuseTexture by name..." << std::endl;
+                texturePath = GetConnectedTexturePath(surfaceShader, "DiffuseTexture");
+            }
+            
+            if (!texturePath.empty()) {
+                std::cout << "  Loading albedo texture: " << texturePath << std::endl;
+                GLuint texId = g_textureManager.loadTexture(texturePath);
+                newMaterial->albedoMap = texId;
+                std::cout << "  Albedo texture loaded with ID: " << texId << std::endl;
+            } else {
+                std::cout << "  No albedo texture found" << std::endl;
             }
         }
 
@@ -529,14 +834,28 @@ bool UsdLoader::ProcessMaterial(void* primPtr, SceneNode* node)
             }
         }
 
-        // Normal map
-        if (UsdAttribute normalAttr = surfaceShader.GetInput(TfToken("normal"))) {
-            SdfAssetPath assetPath;
-            if (normalAttr.Get(&assetPath)) {
-                std::string texturePath = assetPath.GetAssetPath();
-                if (!texturePath.empty()) {
-                    newMaterial->normalMap = g_textureManager.loadTexture(texturePath);
-                }
+        // Try to load normal map from connected shader
+        std::cout << "  Checking for normal texture..." << std::endl;
+        if (UsdShadeInput normalInput = surfaceShader.GetInput(TfToken("normal"))) {
+            std::string texturePath;
+            
+            // Try to follow the connection to find the texture shader
+            std::cout << "  Following normal connection..." << std::endl;
+            texturePath = GetTexturePathFromConnectedInput(normalInput);
+            
+            // Fallback: try to find NormalTexture by name (not recommended but as backup)
+            if (texturePath.empty()) {
+                std::cout << "  Connection failed, trying to find NormalTexture by name..." << std::endl;
+                texturePath = GetConnectedTexturePath(surfaceShader, "NormalTexture");
+            }
+            
+            if (!texturePath.empty()) {
+                std::cout << "  Loading normal texture: " << texturePath << std::endl;
+                GLuint texId = g_textureManager.loadTexture(texturePath);
+                newMaterial->normalMap = texId;
+                std::cout << "  Normal texture loaded with ID: " << texId << std::endl;
+            } else {
+                std::cout << "  No normal texture found" << std::endl;
             }
         }
 
