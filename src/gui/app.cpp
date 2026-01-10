@@ -185,6 +185,10 @@ bool App::Initialize(const std::string& title)
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    
+    // Face culling disabled to support single-sided geometry (like planes)
+    // Can be enabled per-material or per-object if needed
+    glDisable(GL_CULL_FACE);
 
     // Initialize renderer with window
     // Explicitly use the global Renderer type to match the member declaration
@@ -783,8 +787,6 @@ void App::RenderUI()
                         ImGui::DragFloat("Height##area", &alight->height, 0.1f, 0.1f, 100.0f);
                     } else if (light->GetType() == LightType::Ambient) {
                         // Ambient lights don't have position/direction
-                        ImGui::Text("Ambient light properties:");
-                        ImGui::Text("  No position/direction (affects entire scene)");
                     }
                     
                     ImGui::TreePop();
@@ -912,7 +914,7 @@ void App::CheckShaderFileChanges()
 
         if (renderer_->use_shader(vertex_path, fragment_path)) 
         {
-            std::cout << "Shader reloaded successfully!\n";
+            std::cout << "Shader reloaded successfully\n";
             if (vertex_changed) last_vertex_mod_time_ = vertex_mod;
             if (fragment_changed) last_fragment_mod_time_ = fragment_mod;
         } else {

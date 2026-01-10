@@ -3,7 +3,8 @@
 in vec3 FragPos;
 in vec3 Normal;
 in vec2 TexCoord;
-in mat3 TBN;
+in vec3 Tangent;
+in vec3 Bitangent;
 
 out vec4 FragColor;
 
@@ -205,7 +206,15 @@ vec3 applyNormalMapping(vec3 N, vec3 normalSample)
     // Normalize the sampled normal (from [0,1] to [-1,1])
     normalSample = normalize(normalSample * 2.0 - 1.0);
     
-    // Transform normal from tangent space to world space using TBN
+    // Normalize the T, B, N vectors received from vertex shader
+    vec3 T = normalize(Tangent);
+    vec3 B = normalize(Bitangent);
+    vec3 Nlocal = normalize(Normal);
+    
+    // Construct TBN matrix (transforms from tangent space to world space)
+    mat3 TBN = mat3(T, B, Nlocal);
+    
+    // Transform normal from tangent space to world space
     vec3 mappedNormal = normalize(TBN * normalSample);
     
     return mappedNormal;
