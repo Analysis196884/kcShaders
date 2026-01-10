@@ -8,10 +8,16 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <ctime>
+#include <iomanip>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+
+// STB image write for screenshot
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
 
 namespace kcShaders {
 
@@ -622,6 +628,46 @@ void Renderer::resize_framebuffer(int width, int height)
     fb_height_ = height;
     
     create_framebuffer();
+}
+
+bool Renderer::take_screenshot(const std::string& filename)
+{
+    // Set pixel alignment for proper row reading
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    
+    // Allocate memory for pixel data
+    std::vector<unsigned char> pixels(fb_width_ * fb_height_ * 3);
+    
+    // Bind the framebuffer for reading
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo_);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    
+    // Check what we're reading from
+    GLint readFBO;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readFBO);
+    
+    // Read the pixels from bottom to top (OpenGL origin is bottom-left)
+    // We read directly in the correct order to avoid manual flipping
+    for (int y = 0; y < fb_height_; ++y) {
+        glReadPixels(0, fb_height_ - 1 - y, fb_width_, 1, GL_RGB, GL_UNSIGNED_BYTE, 
+                     pixels.data() + (y * fb_width_ * 3));
+    }
+    
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    
+    // Reset pixel alignment
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+    
+    // Write to file
+    int result = stbi_write_png(filename.c_str(), fb_width_, fb_height_, 3, pixels.data(), fb_width_ * 3);
+    
+    if (result) {
+        std::cout << "Screenshot saved: " << filename << std::endl;
+        return true;
+    } else {
+        std::cerr << "Failed to save screenshot: " << filename << std::endl;
+        return false;
+    }
 }
 
 } // namespace kcShaders

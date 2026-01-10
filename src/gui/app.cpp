@@ -19,6 +19,8 @@
 
 #include <iostream>
 #include <fstream>
+#include <sstream>
+#include <iomanip>
 #include <stdexcept>
 #include <cstring>
 #include <ctime>
@@ -568,6 +570,25 @@ void App::RenderUI()
         ImGui::Text("Position: (%.2f, %.2f, %.2f)", cam_pos.x, cam_pos.y, cam_pos.z);
         
         ImGui::SliderFloat("Speed", &camera_speed_, 1.0f, 20.0f, "%.1f units/s");
+    }
+
+    ImGui::Spacing();
+
+    // Screenshot button
+    if (ImGui::Button("Take Screenshot", ImVec2(180, 0))) {
+        // Generate timestamped filename
+        auto now = std::time(nullptr);
+        auto tm = *std::localtime(&now);
+        std::ostringstream filename_stream;
+        filename_stream << "screenshots/screenshot_" 
+                       << std::put_time(&tm, "%Y%m%d_%H%M%S") 
+                       << ".png";
+        std::string filename = filename_stream.str();
+        
+        // Create screenshots directory if it doesn't exist
+        std::system("if not exist screenshots mkdir screenshots");
+        
+        renderer_->take_screenshot(filename);
     }
     
     ImGui::End();

@@ -28,6 +28,9 @@ class Renderer {
     GLuint get_framebuffer_texture() const { return fbo_texture_; }
     int get_fb_width() const { return fb_width_; }
     int get_fb_height() const { return fb_height_; }
+    
+    // Screenshot
+    bool take_screenshot(const std::string& filename);
 
     // shader compilation and management 
     bool use_shader(const std::string& vertex_path, const std::string& fragment_path);
