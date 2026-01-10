@@ -384,7 +384,8 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
         
         // Texture coordinates (only for vertex-varying, face-varying will be handled later)
         if (hasTexCoords && !isFaceVarying && i < texCoords.size()) {
-            v.uv = glm::vec2(texCoords[i][0], texCoords[i][1]);
+            // Flip V coordinate for OpenGL (USD uses top-left origin, OpenGL uses bottom-left)
+            v.uv = glm::vec2(texCoords[i][0], 1.0f - texCoords[i][1]);
         } else {
             v.uv = glm::vec2(0.0f, 0.0f);
         }
@@ -421,7 +422,8 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
                 
                 // Get UV from face-varying array
                 if (uvIndex < texCoords.size()) {
-                    v.uv = glm::vec2(texCoords[uvIndex][0], texCoords[uvIndex][1]);
+                    // Flip V coordinate for OpenGL (USD uses top-left origin, OpenGL uses bottom-left)
+                    v.uv = glm::vec2(texCoords[uvIndex][0], 1.0f - texCoords[uvIndex][1]);
                 } else {
                     v.uv = glm::vec2(0.0f, 0.0f);
                 }
@@ -497,20 +499,7 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
         return false;
     }
     
-    // Calculate normals if we don't have them from USD
-    bool needsCalculatedNormals = true;
-    if (hasNormals) {
-        // Check if any normal is still zero (meaning it wasn't set from USD data)
-        needsCalculatedNormals = false;
-        for (const auto& v : vertices) {
-            if (glm::length(v.normal) < 0.001f) {
-                needsCalculatedNormals = true;
-                break;
-            }
-        }
-    }
-    
-    if (needsCalculatedNormals) {
+    if (!hasNormals) {
         std::cout << "  Calculating normals from geometry..." << std::endl;
         
         // For face-varying vertices, we need to smooth normals by position
@@ -586,6 +575,55 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
                 }
             }
         }
+    }
+    
+    // Calculate tangents and bitangents
+    // Reference: https://learnopengl.com/Advanced-Lighting/Normal-Mapping
+    for (size_t i = 0; i < indices.size(); i += 3) {
+        uint32_t i0 = indices[i];
+        uint32_t i1 = indices[i + 1];
+        uint32_t i2 = indices[i + 2];
+        
+        glm::vec3& v0 = vertices[i0].position;
+        glm::vec3& v1 = vertices[i1].position;
+        glm::vec3& v2 = vertices[i2].position;
+        
+        glm::vec2& uv0 = vertices[i0].uv;
+        glm::vec2& uv1 = vertices[i1].uv;
+        glm::vec2& uv2 = vertices[i2].uv;
+        
+        glm::vec3 edge1 = v1 - v0;
+        glm::vec3 edge2 = v2 - v0;
+        glm::vec2 deltaUV1 = uv1 - uv0;
+        glm::vec2 deltaUV2 = uv2 - uv0;
+        
+        float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
+        
+        glm::vec3 tangent;
+        tangent.x = f * (deltaUV2.y * edge1.x - deltaUV1.y * edge2.x);
+        tangent.y = f * (deltaUV2.y * edge1.y - deltaUV1.y * edge2.y);
+        tangent.z = f * (deltaUV2.y * edge1.z - deltaUV1.y * edge2.z);
+        
+        glm::vec3 bitangent;
+        bitangent.x = f * (-deltaUV2.x * edge1.x + deltaUV1.x * edge2.x);
+        bitangent.y = f * (-deltaUV2.x * edge1.y + deltaUV1.x * edge2.y);
+        bitangent.z = f * (-deltaUV2.x * edge1.z + deltaUV1.x * edge2.z);
+        
+        // Accumulate tangents and bitangents
+        vertices[i0].tangent += tangent;
+        vertices[i1].tangent += tangent;
+        vertices[i2].tangent += tangent;
+        
+        vertices[i0].bitangent += bitangent;
+        vertices[i1].bitangent += bitangent;
+        vertices[i2].bitangent += bitangent;
+    }
+    
+    // Normalize and orthogonalize tangents/bitangents
+    for (auto& v : vertices) {
+        // Gram-Schmidt orthogonalize
+        v.tangent = glm::normalize(v.tangent - glm::dot(v.tangent, v.normal) * v.normal);
+        v.bitangent = glm::normalize(v.bitangent);
     }
 
     // Create mesh object
@@ -759,7 +797,6 @@ bool UsdLoader::ProcessMaterial(void* primPtr, SceneNode* node)
             if (!texturePath.empty()) {
                 GLuint texId = g_textureManager.loadTexture(texturePath);
                 newMaterial->albedoMap = texId;
-                std::cout << "  Albedo texture loaded with ID: " << texId << std::endl;
             } else {
                 // std::cerr << "  No albedo texture found" << std::endl;
             }
@@ -826,7 +863,6 @@ bool UsdLoader::ProcessMaterial(void* primPtr, SceneNode* node)
             if (!texturePath.empty()) {
                 GLuint texId = g_textureManager.loadTexture(texturePath);
                 newMaterial->normalMap = texId;
-                std::cout << "  Normal texture loaded with ID: " << texId << std::endl;
             } else {
                 std::cerr << "  No normal texture found" << std::endl;
             }
