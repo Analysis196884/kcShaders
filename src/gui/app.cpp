@@ -511,7 +511,25 @@ void App::RenderUI()
     ImGuiID dockspace_id = ImGui::GetID("MainDockSpace");
     ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
 
-    // Menu Bar
+    // Render menu bar
+    RenderMenuBar();
+
+    ImGui::End();
+
+    // Show metrics window
+    if (show_metrics_window_) {
+        ImGui::ShowMetricsWindow(&show_metrics_window_);
+    }
+
+    // Render UI panels
+    RenderControlPanel();
+    RenderShaderEditorPanel();
+    RenderViewportPanel();
+    RenderScenePanel();
+}
+
+void App::RenderMenuBar()
+{
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("File")) {
 #ifdef ENABLE_USD_SUPPORT
@@ -550,15 +568,10 @@ void App::RenderUI()
         
         ImGui::EndMenuBar();
     }
+}
 
-    ImGui::End();
-
-    // Show metrics window
-    if (show_metrics_window_) {
-        ImGui::ShowMetricsWindow(&show_metrics_window_);
-    }
-
-    // Control panel
+void App::RenderControlPanel()
+{
     ImGui::Begin("Control Panel");
     
     ImGui::Text("Application Info");
@@ -585,20 +598,28 @@ void App::RenderUI()
         auto now = std::time(nullptr);
         auto tm = *std::localtime(&now);
         std::ostringstream filename_stream;
-        filename_stream << "screenshots/screenshot_" 
+        
+        // Use absolute path to screenshots directory to avoid directory context issues
+        std::filesystem::path screenshotsDir = std::filesystem::current_path() / "screenshots";
+        std::filesystem::create_directories(screenshotsDir);
+        
+        filename_stream << screenshotsDir.string() << "/screenshot_" 
                        << std::put_time(&tm, "%Y%m%d_%H%M%S") 
                        << ".png";
         std::string filename = filename_stream.str();
         
-        // Create screenshots directory if it doesn't exist
-        std::system("if not exist screenshots mkdir screenshots");
-        
-        renderer_->take_screenshot(filename);
+        if (renderer_->take_screenshot(filename)) {
+            std::cout << "Screenshot saved to: " << filename << std::endl;
+        } else {
+            std::cerr << "Failed to save screenshot to: " << filename << std::endl;
+        }
     }
     
     ImGui::End();
+}
 
-    // Shader editor panel
+void App::RenderShaderEditorPanel()
+{
     ImGui::Begin("Shader Editor");
     
     ImGui::Text("Shader Paths");
@@ -629,8 +650,10 @@ void App::RenderUI()
     }
     
     ImGui::End();
+}
 
-    // Viewport window - Display 3D scene from framebuffer
+void App::RenderViewportPanel()
+{
     ImGui::Begin("Viewport");
     
     // Get available content region
@@ -651,8 +674,10 @@ void App::RenderUI()
     }
     
     ImGui::End();
+}
 
-    // Scene hierarchy
+void App::RenderScenePanel()
+{
     ImGui::Begin("Scene");
     
     ImGui::Text("Scene Management");
@@ -699,106 +724,111 @@ void App::RenderUI()
             DisplaySceneNodeTree(root.get(), static_cast<int>(i));
         }
         
-        // Lights section
-        if (!current_scene_->lights.empty() || true) {
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Text("Lights (%zu):", current_scene_->lights.size());
-            
-            // Add light button
-            if (ImGui::Button("+ Add Light", ImVec2(150, 36))) {
-                ImGui::OpenPopup("AddLightPopup");
-            }
-            
-            // Light type selection popup
-            if (ImGui::BeginPopup("AddLightPopup")) {
-                if (ImGui::MenuItem("Directional Light")) {
-                    AddLight(LightType::Directional);
-                    ImGui::CloseCurrentPopup();
-                }
-                if (ImGui::MenuItem("Point Light")) {
-                    AddLight(LightType::Point);
-                    ImGui::CloseCurrentPopup();
-                }
-                if (ImGui::MenuItem("Spot Light")) {
-                    AddLight(LightType::Spot);
-                    ImGui::CloseCurrentPopup();
-                }
-                if (ImGui::MenuItem("Area Light")) {
-                    AddLight(LightType::Area);
-                    ImGui::CloseCurrentPopup();
-                }
-                if (ImGui::MenuItem("Ambient Light")) {
-                    AddLight(LightType::Ambient);
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::EndPopup();
-            }
-            
-            // Display existing lights
-            for (size_t i = 0; i < current_scene_->lights.size(); ++i) {
-                Light* light = current_scene_->lights[i];
-                ImGui::PushID(1000 + static_cast<int>(i));
-                
-                // Get light type name
-                const char* typeName = "Unknown";
-                switch (light->GetType()) {
-                    case LightType::Directional: typeName = "Directional"; break;
-                    case LightType::Point: typeName = "Point"; break;
-                    case LightType::Spot: typeName = "Spot"; break;
-                    case LightType::Area: typeName = "Area"; break;
-                    case LightType::Ambient: typeName = "Ambient"; break;
-                }
-                
-                bool light_open = ImGui::TreeNode("Light", "%s: %s", typeName, light->name.c_str());
-                if (light_open) {
-                    ImGui::Checkbox("Enabled", &light->enabled);
-                    ImGui::ColorEdit3("Color", &light->color[0], ImGuiColorEditFlags_NoInputs);
-                    ImGui::SliderFloat("Intensity", &light->intensity, 0.0f, 5.0f);
-                    
-                    // Type-specific properties
-                    if (light->GetType() == LightType::Point) {
-                        PointLight* plight = static_cast<PointLight*>(light);
-                        ImGui::DragFloat3("Position##point", &plight->position[0], 0.1f);
-                        ImGui::DragFloat("Radius##point", &plight->radius, 0.1f, 0.1f, 100.0f);
-                        ImGui::Text("Attenuation: Const=%.2f, Linear=%.4f, Quad=%.6f",
-                            plight->constant, plight->linear, plight->quadratic);
-                    } else if (light->GetType() == LightType::Directional) {
-                        DirectionalLight* dlight = static_cast<DirectionalLight*>(light);
-                        ImGui::DragFloat3("Direction##dir", &dlight->direction[0], 0.01f, -1.0f, 1.0f);
-                        // Normalize direction after editing
-                        dlight->direction = glm::normalize(dlight->direction);
-                    } else if (light->GetType() == LightType::Spot) {
-                        SpotLight* slight = static_cast<SpotLight*>(light);
-                        ImGui::DragFloat3("Position##spot", &slight->position[0], 0.1f);
-                        ImGui::DragFloat3("Direction##spot", &slight->direction[0], 0.01f, -1.0f, 1.0f);
-                        // Normalize direction after editing
-                        slight->direction = glm::normalize(slight->direction);
-                        ImGui::SliderFloat("Inner Cone Angle", &slight->innerConeAngle, 0.0f, slight->outerConeAngle);
-                        ImGui::SliderFloat("Outer Cone Angle", &slight->outerConeAngle, slight->innerConeAngle, 180.0f);
-                        ImGui::Text("Attenuation: Const=%.2f, Linear=%.4f, Quad=%.6f",
-                            slight->constant, slight->linear, slight->quadratic);
-                    } else if (light->GetType() == LightType::Area) {
-                        AreaLight* alight = static_cast<AreaLight*>(light);
-                        ImGui::DragFloat3("Position##area", &alight->position[0], 0.1f);
-                        ImGui::DragFloat3("Normal##area", &alight->normal[0], 0.01f, -1.0f, 1.0f);
-                        // Normalize normal after editing
-                        alight->normal = glm::normalize(alight->normal);
-                        ImGui::DragFloat("Width##area", &alight->width, 0.1f, 0.1f, 100.0f);
-                        ImGui::DragFloat("Height##area", &alight->height, 0.1f, 0.1f, 100.0f);
-                    } else if (light->GetType() == LightType::Ambient) {
-                        // Ambient lights don't have position/direction
-                    }
-                    
-                    ImGui::TreePop();
-                }
-                
-                ImGui::PopID();
-            }
-        }
+        // Render lights section
+        RenderLightsSection();
     }
     
     ImGui::End();
+}
+
+void App::RenderLightsSection()
+{
+    if (!current_scene_) return;
+    
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Text("Lights (%zu):", current_scene_->lights.size());
+    
+    // Add light button
+    if (ImGui::Button("+ Add Light", ImVec2(150, 36))) {
+        ImGui::OpenPopup("AddLightPopup");
+    }
+    
+    // Light type selection popup
+    if (ImGui::BeginPopup("AddLightPopup")) {
+        if (ImGui::MenuItem("Directional Light")) {
+            AddLight(LightType::Directional);
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Point Light")) {
+            AddLight(LightType::Point);
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Spot Light")) {
+            AddLight(LightType::Spot);
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Area Light")) {
+            AddLight(LightType::Area);
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Ambient Light")) {
+            AddLight(LightType::Ambient);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    
+    // Display existing lights
+    for (size_t i = 0; i < current_scene_->lights.size(); ++i) {
+        Light* light = current_scene_->lights[i];
+        ImGui::PushID(1000 + static_cast<int>(i));
+        
+        // Get light type name
+        const char* typeName = "Unknown";
+        switch (light->GetType()) {
+            case LightType::Directional: typeName = "Directional"; break;
+            case LightType::Point: typeName = "Point"; break;
+            case LightType::Spot: typeName = "Spot"; break;
+            case LightType::Area: typeName = "Area"; break;
+            case LightType::Ambient: typeName = "Ambient"; break;
+        }
+        
+        bool light_open = ImGui::TreeNode("Light", "%s: %s", typeName, light->name.c_str());
+        if (light_open) {
+            ImGui::Checkbox("Enabled", &light->enabled);
+            ImGui::ColorEdit3("Color", &light->color[0], ImGuiColorEditFlags_NoInputs);
+            ImGui::SliderFloat("Intensity", &light->intensity, 0.0f, 5.0f);
+            
+            // Type-specific properties
+            if (light->GetType() == LightType::Point) {
+                PointLight* plight = static_cast<PointLight*>(light);
+                ImGui::DragFloat3("Position##point", &plight->position[0], 0.1f);
+                ImGui::DragFloat("Radius##point", &plight->radius, 0.1f, 0.1f, 100.0f);
+                ImGui::Text("Attenuation: Const=%.2f, Linear=%.4f, Quad=%.6f",
+                    plight->constant, plight->linear, plight->quadratic);
+            } else if (light->GetType() == LightType::Directional) {
+                DirectionalLight* dlight = static_cast<DirectionalLight*>(light);
+                ImGui::DragFloat3("Direction##dir", &dlight->direction[0], 0.01f, -1.0f, 1.0f);
+                // Normalize direction after editing
+                dlight->direction = glm::normalize(dlight->direction);
+            } else if (light->GetType() == LightType::Spot) {
+                SpotLight* slight = static_cast<SpotLight*>(light);
+                ImGui::DragFloat3("Position##spot", &slight->position[0], 0.1f);
+                ImGui::DragFloat3("Direction##spot", &slight->direction[0], 0.01f, -1.0f, 1.0f);
+                // Normalize direction after editing
+                slight->direction = glm::normalize(slight->direction);
+                ImGui::SliderFloat("Inner Cone Angle", &slight->innerConeAngle, 0.0f, slight->outerConeAngle);
+                ImGui::SliderFloat("Outer Cone Angle", &slight->outerConeAngle, slight->innerConeAngle, 180.0f);
+                ImGui::Text("Attenuation: Const=%.2f, Linear=%.4f, Quad=%.6f",
+                    slight->constant, slight->linear, slight->quadratic);
+            } else if (light->GetType() == LightType::Area) {
+                AreaLight* alight = static_cast<AreaLight*>(light);
+                ImGui::DragFloat3("Position##area", &alight->position[0], 0.1f);
+                ImGui::DragFloat3("Normal##area", &alight->normal[0], 0.01f, -1.0f, 1.0f);
+                // Normalize normal after editing
+                alight->normal = glm::normalize(alight->normal);
+                ImGui::DragFloat("Width##area", &alight->width, 0.1f, 0.1f, 100.0f);
+                ImGui::DragFloat("Height##area", &alight->height, 0.1f, 0.1f, 100.0f);
+            } else if (light->GetType() == LightType::Ambient) {
+                // Ambient lights don't have position/direction
+            }
+            
+            ImGui::TreePop();
+        }
+        
+        ImGui::PopID();
+    }
 }
 
 // GLFW Callbacks

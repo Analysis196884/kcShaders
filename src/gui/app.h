@@ -61,6 +61,14 @@ private:
     void Render();
     void RenderUI();
     
+    // UI Panel rendering methods (extracted from RenderUI)
+    void RenderMenuBar();
+    void RenderControlPanel();
+    void RenderShaderEditorPanel();
+    void RenderViewportPanel();
+    void RenderScenePanel();
+    void RenderLightsSection();
+    
     // Helper method for rendering scene node tree
     void DisplaySceneNodeTree(SceneNode* node, int nodeIndex);
     
