@@ -9,6 +9,14 @@ struct GLFWwindow;
 
 namespace kcShaders {
 
+// Rendering mode enumeration
+enum class RenderMode {
+    ForwardRendering,
+    DeferredRendering,
+    Shadertoy,
+    RayTracing  // Not yet implemented
+};
+
 class Scene;
 class Renderer;
 class Camera;
@@ -96,10 +104,18 @@ private:
     bool show_metrics_window_;
     float clear_color_[4];
     float ui_scale_;
+    RenderMode render_mode_;
     
     // Shader paths
     char vertex_shader_path_[256];
     char fragment_shader_path_[256];
+    
+    // Deferred rendering shader paths
+    char geom_vert_shader_path_[256];
+    char geom_frag_shader_path_[256];
+    char light_vert_shader_path_[256];
+    char light_frag_shader_path_[256];
+    
     // Shader file watch
     time_t last_vertex_mod_time_;
     time_t last_fragment_mod_time_;

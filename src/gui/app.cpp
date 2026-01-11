@@ -48,6 +48,7 @@ App::App(const std::string& title)
     , show_metrics_window_(false)
     , clear_color_{0.1f, 0.1f, 0.12f, 1.0f}
     , ui_scale_(1.0f)
+    , render_mode_(RenderMode::DeferredRendering)
     , last_vertex_mod_time_(0)
     , last_fragment_mod_time_(0)
     , shader_check_timer_(0.0f)
@@ -58,8 +59,14 @@ App::App(const std::string& title)
     , camera_speed_(5.0f)
 {
     // Initialize shader path arrays to empty strings
-    vertex_shader_path_[0] = '\0';
-    fragment_shader_path_[0] = '\0';
+    strncpy_s(vertex_shader_path_, "../../src/shaders/default.vert", sizeof(vertex_shader_path_) - 1);
+    strncpy_s(fragment_shader_path_, "../../src/shaders/default.frag", sizeof(fragment_shader_path_) - 1);
+    
+    // Initialize deferred rendering shader paths with defaults
+    strncpy_s(geom_vert_shader_path_, "../../src/shaders/deferred_geometry.vert", sizeof(geom_vert_shader_path_) - 1);
+    strncpy_s(geom_frag_shader_path_, "../../src/shaders/deferred_geometry.frag", sizeof(geom_frag_shader_path_) - 1);
+    strncpy_s(light_vert_shader_path_, "../../src/shaders/deferred_lighting.vert", sizeof(light_vert_shader_path_) - 1);
+    strncpy_s(light_frag_shader_path_, "../../src/shaders/deferred_lighting.frag", sizeof(light_frag_shader_path_) - 1);
     
     // Load config (will override defaults if file exists)
     LoadConfig();
@@ -208,6 +215,15 @@ bool App::Initialize(const std::string& title)
             std::cout << "  Vertex: " << vpath << "\n";
             std::cout << "  Fragment: " << fpath << "\n";
         }
+    }
+    
+    // Set initial rendering mode based on render_mode_
+    if (render_mode_ == RenderMode::DeferredRendering) {
+        renderer_->setDeferredRendering(true);
+        std::cout << "Initial mode: Deferred Rendering\n";
+    } else {
+        renderer_->setDeferredRendering(false);
+        std::cout << "Initial mode: Forward Rendering\n";
     }
 
     // Load demo scene by default
@@ -458,6 +474,9 @@ void App::Render()
     // Rendering
     ImGui::Render();
     
+    // Ensure we're rendering to the default framebuffer
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    
     int display_w, display_h;
     glfwGetFramebufferSize(window_, &display_w, &display_h);
     glViewport(0, 0, display_w, display_h);
@@ -465,11 +484,27 @@ void App::Render()
     glClearColor(clear_color_[0], clear_color_[1], clear_color_[2], clear_color_[3]);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // Render scene if available
-    if (current_scene_ && camera_) {
-        renderer_->render_scene(current_scene_, camera_);
-    } else {
-        renderer_->render_shadertoy();
+    // Render based on selected mode
+    switch (render_mode_) {
+        case RenderMode::ForwardRendering:
+            if (current_scene_ && camera_) {
+                renderer_->render_scene(current_scene_, camera_);
+            }
+            break;
+        case RenderMode::DeferredRendering:
+            if (current_scene_ && camera_) {
+                renderer_->render_scene(current_scene_, camera_);
+            }
+            break;
+            
+        case RenderMode::Shadertoy:
+            renderer_->render_shadertoy();
+            break;
+            
+        case RenderMode::RayTracing:
+            // Not yet implemented, fallback to shadertoy
+            renderer_->render_shadertoy();
+            break;
     }
 
     // Render ImGui
@@ -578,11 +613,51 @@ void App::RenderControlPanel()
     ImGui::Separator();
     ImGui::Text("FPS: %.1f (%.3f ms/frame)", 1.0f / delta_time_, delta_time_ * 1000.0f);
 
+    ImGui::Spacing();
+    ImGui::Spacing();
+    
+    // Rendering Mode Selection
+    ImGui::Text("Rendering Mode");
+    ImGui::Separator();
+    
+    const char* render_modes[] = { "Forward Rendering", "Deferred Rendering", "Shadertoy", "Ray Tracing (Not Implemented)" };
+    int current_mode = static_cast<int>(render_mode_);
+    
+    if (ImGui::Combo("Mode", &current_mode, render_modes, IM_ARRAYSIZE(render_modes))) {
+        render_mode_ = static_cast<RenderMode>(current_mode);
+        
+        // Apply rendering mode changes
+        switch (render_mode_) {
+            case RenderMode::ForwardRendering:
+                renderer_->setDeferredRendering(false);
+                std::cout << "Switched to Forward Rendering mode\n";
+                break;
+                
+            case RenderMode::DeferredRendering:
+                renderer_->setDeferredRendering(true);
+                std::cout << "Switched to Deferred Rendering mode\n";
+                break;
+                
+            case RenderMode::Shadertoy:
+                renderer_->setDeferredRendering(false);
+                std::cout << "Switched to Shadertoy mode\n";
+                break;
+                
+            case RenderMode::RayTracing:
+                std::cout << "Ray Tracing mode is not yet implemented\n";
+                break;
+        }
+    }
+    
+    // Show current mode info
+    ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Active: %s", render_modes[current_mode]);
+
     // Camera info and controls
     if (camera_) {
         ImGui::Spacing();
-        ImGui::Separator();
+        ImGui::Spacing();
         ImGui::Text("Camera");
+        ImGui::Separator();
         
         glm::vec3 cam_pos = camera_->GetPosition();
         ImGui::Text("Position: (%.2f, %.2f, %.2f)", cam_pos.x, cam_pos.y, cam_pos.z);
@@ -622,7 +697,8 @@ void App::RenderShaderEditorPanel()
 {
     ImGui::Begin("Shader Editor");
     
-    ImGui::Text("Shader Paths");
+    // Forward Rendering Shaders
+    ImGui::Text("Forward Rendering Shaders");
     ImGui::Separator();
     
     // Vertex shader path input
@@ -635,19 +711,37 @@ void App::RenderShaderEditorPanel()
     ImGui::SameLine();
     ImGui::InputText("##FragmentShader", fragment_shader_path_, sizeof(fragment_shader_path_));
     
-    // Load/Reload shader button
-    if (ImGui::Button("Load Shaders", ImVec2(140, 0))) 
-    {
-        std::string vpath(vertex_shader_path_);
-        std::string fpath(fragment_shader_path_);
-        if (renderer_->use_shader(vpath, fpath)) {
-            std::cout << "Shaders loaded successfully:\n";
-            std::cout << "  Vertex: " << vpath << "\n";
-            std::cout << "  Fragment: " << fpath << "\n";
-        } else {
-            // std::cerr << "Failed to load shaders" << std::endl;
-        }
-    }
+    ImGui::Spacing();
+    ImGui::Spacing();
+    
+    // Deferred Rendering Shaders
+    ImGui::Text("Deferred Rendering Shaders");
+    ImGui::Separator();
+    
+    // Geometry Pass
+    ImGui::Text("Geometry Pass:");
+    ImGui::Indent();
+    ImGui::Text("Vertex:");
+    ImGui::SameLine();
+    ImGui::InputText("##GeomVert", geom_vert_shader_path_, sizeof(geom_vert_shader_path_));
+    
+    ImGui::Text("Fragment:");
+    ImGui::SameLine();
+    ImGui::InputText("##GeomFrag", geom_frag_shader_path_, sizeof(geom_frag_shader_path_));
+    ImGui::Unindent();
+    
+    ImGui::Spacing();
+    
+    // Lighting Pass
+    ImGui::Text("Lighting Pass:");
+    ImGui::Indent();
+    ImGui::Text("Vertex:");
+    ImGui::SameLine();
+    ImGui::InputText("##LightVert", light_vert_shader_path_, sizeof(light_vert_shader_path_));
+    
+    ImGui::Text("Fragment:");
+    ImGui::SameLine();
+    ImGui::InputText("##LightFrag", light_frag_shader_path_, sizeof(light_frag_shader_path_));
     
     ImGui::End();
 }
@@ -670,6 +764,14 @@ void App::RenderViewportPanel()
         
         // Display the framebuffer texture
         GLuint texture_id = renderer_->get_framebuffer_texture();
+        
+        // Debug output (once per run)
+        static bool first_debug = true;
+        if (first_debug) {
+            std::cout << "[Viewport] Displaying texture ID: " << texture_id << "\n";
+            first_debug = false;
+        }
+        
         ImGui::Image((void*)(intptr_t)texture_id, viewport_size, ImVec2(0, 1), ImVec2(1, 0));
     }
     
@@ -881,11 +983,40 @@ void App::LoadConfig()
                 if (!path.empty() && path.length() < sizeof(vertex_shader_path_)) {
                     strcpy_s(vertex_shader_path_, sizeof(vertex_shader_path_), path.c_str());
                 }
-            } else if (line.find("fragment_shader=") == 0) 
+            } 
+            else if (line.find("fragment_shader=") == 0) 
             {
                 std::string path = line.substr(16);
                 if (!path.empty() && path.length() < sizeof(fragment_shader_path_)) {
                     strcpy_s(fragment_shader_path_, sizeof(fragment_shader_path_), path.c_str());
+                }
+            }
+            else if (line.find("geom_vert_shader=") == 0) 
+            {
+                std::string path = line.substr(17);
+                if (!path.empty() && path.length() < sizeof(geom_vert_shader_path_)) {
+                    strcpy_s(geom_vert_shader_path_, sizeof(geom_vert_shader_path_), path.c_str());
+                }
+            }
+            else if (line.find("geom_frag_shader=") == 0) 
+            {
+                std::string path = line.substr(17);
+                if (!path.empty() && path.length() < sizeof(geom_frag_shader_path_)) {
+                    strcpy_s(geom_frag_shader_path_, sizeof(geom_frag_shader_path_), path.c_str());
+                }
+            }
+            else if (line.find("light_vert_shader=") == 0) 
+            {
+                std::string path = line.substr(18);
+                if (!path.empty() && path.length() < sizeof(light_vert_shader_path_)) {
+                    strcpy_s(light_vert_shader_path_, sizeof(light_vert_shader_path_), path.c_str());
+                }
+            }
+            else if (line.find("light_frag_shader=") == 0) 
+            {
+                std::string path = line.substr(18);
+                if (!path.empty() && path.length() < sizeof(light_frag_shader_path_)) {
+                    strcpy_s(light_frag_shader_path_, sizeof(light_frag_shader_path_), path.c_str());
                 }
             }
         }
@@ -901,6 +1032,10 @@ void App::SaveConfig()
     if (config_file.is_open()) {
         config_file << "vertex_shader=" << vertex_shader_path_ << "\n";
         config_file << "fragment_shader=" << fragment_shader_path_ << "\n";
+        config_file << "geom_vert_shader=" << geom_vert_shader_path_ << "\n";
+        config_file << "geom_frag_shader=" << geom_frag_shader_path_ << "\n";
+        config_file << "light_vert_shader=" << light_vert_shader_path_ << "\n";
+        config_file << "light_frag_shader=" << light_frag_shader_path_ << "\n";
         config_file.close();
     }
 }

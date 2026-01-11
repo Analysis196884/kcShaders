@@ -89,19 +89,19 @@ void GBuffer::bind()
 
 void GBuffer::bindForReading()
 {
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    
+    // Only bind textures to texture units; do not touch framebuffer binding here.
+    // Match actual uniform locations: Albedo:0 Material:1 Normal:2 Position:3
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, albedoTexture_);
     
     glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, normalTexture_);
+    glBindTexture(GL_TEXTURE_2D, materialTexture_);
     
     glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, positionTexture_);
+    glBindTexture(GL_TEXTURE_2D, normalTexture_);
     
     glActiveTexture(GL_TEXTURE3);
-    glBindTexture(GL_TEXTURE_2D, materialTexture_);
+    glBindTexture(GL_TEXTURE_2D, positionTexture_);
 }
 
 void GBuffer::unbind()

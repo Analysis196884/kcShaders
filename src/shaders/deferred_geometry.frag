@@ -6,7 +6,7 @@ in vec2 TexCoord;
 
 // G-Buffer outputs
 layout(location = 0) out vec4 GAlbedo;      // RGB: albedo, A: unused
-layout(location = 1) out vec4 GNormal;      // RGB: normal (view space), A: unused
+layout(location = 1) out vec4 GNormal;      // RGB: normal (world space), A: unused
 layout(location = 2) out vec4 GPosition;    // RGB: position (world space), A: unused
 layout(location = 3) out vec4 GMaterial;    // R: metallic, G: roughness, B: AO, A: unused
 
@@ -91,12 +91,9 @@ void main()
     // Get normal with normal mapping support
     vec3 normal = getNormal();
     
-    // Transform normal to view space
-    vec3 viewNormal = mat3(uView) * normal;
-    
-    // Store in G-Buffer
+    // Store in G-Buffer (world space normal)
     GAlbedo = vec4(albedo, 1.0);
-    GNormal = vec4(viewNormal, 1.0);
+    GNormal = vec4(normalize(normal), 1.0);
     GPosition = vec4(FragPos, 1.0);
     GMaterial = vec4(metallic, roughness, ao, 1.0);
 }

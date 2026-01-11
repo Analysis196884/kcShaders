@@ -4,11 +4,11 @@ in vec2 TexCoord;
 
 out vec4 FragColor;
 
-// G-Buffer inputs
-uniform sampler2D GAlbedo;      // Albedo
-uniform sampler2D GNormal;      // View-space normal
-uniform sampler2D GPosition;    // World-space position
-uniform sampler2D GMaterial;    // Metallic, roughness, AO
+// G-Buffer inputs (order matters for default binding!)
+uniform sampler2D GPosition;    // Texture unit 0 - World-space position
+uniform sampler2D GNormal;      // Texture unit 1 - World-space normal
+uniform sampler2D GAlbedo;      // Texture unit 2 - Albedo
+uniform sampler2D GMaterial;    // Texture unit 3 - Metallic, roughness, AO
 
 uniform vec3 viewPos;
 uniform mat4 uView;
@@ -130,74 +130,123 @@ vec3 calculatePBR(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 albedo, float meta
     return (kD * albedo / PI + specular) * radiance * max(NdotL, 0.0);
 }
 
-// Calculate attenuation
-float calculateAttenuation(float distance, float constant, float linear, float quadratic)
+// Unified lighting helper (matches forward shader behavior)
+vec3 calculateLighting(vec3 L, vec3 radiance, vec3 N, vec3 V, vec3 F0, float roughness, float metallic, vec3 albedo)
 {
-    float attenuation = 1.0 / (constant + linear * distance + quadratic * distance * distance);
+    vec3 H = normalize(V + L);
+    float NDF = distributionGGX(N, H, roughness);
+    float G = geometrySmith(N, V, L, roughness);
+    vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);
+
+    vec3 numerator = NDF * G * F;
+    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
+    vec3 specular = numerator / denominator;
+
+    vec3 kS = F;
+    vec3 kD = vec3(1.0) - kS;
+    kD *= 1.0 - metallic;
+
+    float NdotL = max(dot(N, L), 0.0);
+    return (kD * albedo / PI + specular) * radiance * NdotL;
+}
+
+// Calculate attenuation
+float calculateAttenuation(float dist, float constant, float linear, float quadratic)
+{
+    float attenuation = 1.0 / (constant + linear * dist + quadratic * dist * dist);
     return attenuation;
 }
 
 void main()
 {
-    // Read from G-Buffer
-    vec3 albedo = texture(GAlbedo, TexCoord).rgb;
-    vec3 normal = normalize(texture(GNormal, TexCoord).rgb);
-    vec3 position = texture(GPosition, TexCoord).rgb;
-    vec4 material = texture(GMaterial, TexCoord);
-    float metallic = material.r;
-    float roughness = max(material.g, 0.05);  // Clamp roughness
-    float ao = material.b;
+    // Sample G-Buffer
+    vec3 FragPos = texture(GPosition, TexCoord).rgb;
+    vec3 Normal = texture(GNormal, TexCoord).rgb;
+    vec3 Albedo = texture(GAlbedo, TexCoord).rgb;
+    vec4 MaterialData = texture(GMaterial, TexCoord);
     
-    // Calculate view direction
-    vec3 V = normalize(viewPos - position);
-    
+    float metallic = MaterialData.r;
+    float roughness = MaterialData.g;
+    float ao = MaterialData.b;
+
+    // Basic validity guard
+    if (length(Normal) < 1e-4) {
+        FragColor = vec4(0.0);
+        return;
+    }
+
+    vec3 N = normalize(Normal);
+    vec3 V = normalize(viewPos - FragPos);
+    roughness = clamp(roughness, 0.04, 1.0);
+    metallic = clamp(metallic, 0.0, 1.0);
+    ao = clamp(ao, 0.0, 1.0);
+
+    // Reflectance at normal incidence
+    vec3 F0 = vec3(0.04);
+    F0 = mix(F0, Albedo, metallic);
+
     vec3 Lo = vec3(0.0);
-    
+
     // Directional lights
-    for (int i = 0; i < numDirLights; ++i) {
+    for (int i = 0; i < numDirLights && i < MAX_DIR_LIGHTS; ++i) {
         vec3 L = normalize(-dirLights[i].direction);
         vec3 radiance = dirLights[i].color * dirLights[i].intensity;
-        
-        Lo += calculatePBR(normal, V, L, radiance, albedo, metallic, roughness);
+        Lo += calculateLighting(L, radiance, N, V, F0, roughness, metallic, Albedo);
     }
-    
+
     // Point lights
-    for (int i = 0; i < numPointLights; ++i) {
-        vec3 L = normalize(pointLights[i].position - position);
-        float distance = length(pointLights[i].position - position);
-        float attenuation = calculateAttenuation(distance, pointLights[i].constant, pointLights[i].linear, pointLights[i].quadratic);
+    for (int i = 0; i < numPointLights && i < MAX_POINT_LIGHTS; ++i) {
+        vec3 Lvec = pointLights[i].position - FragPos;
+        float dist = length(Lvec);
+        vec3 L = Lvec / max(dist, 1e-4);
+
+        float c = max(pointLights[i].constant, 0.0001);
+        float l = max(pointLights[i].linear, 0.0);
+        float q = max(pointLights[i].quadratic, 0.0);
+        float attenuation = 1.0 / (c + l * dist + q * dist * dist);
+
+        // Smooth radius falloff like forward shader
+        if (pointLights[i].radius > 0.0) {
+            float smoothFactor = 1.0 - smoothstep(pointLights[i].radius * 0.8, pointLights[i].radius, dist);
+            attenuation *= smoothFactor;
+        }
+
+        attenuation = clamp(attenuation, 0.0, 1.0);
         vec3 radiance = pointLights[i].color * pointLights[i].intensity * attenuation;
-        
-        Lo += calculatePBR(normal, V, L, radiance, albedo, metallic, roughness);
+        Lo += calculateLighting(L, radiance, N, V, F0, roughness, metallic, Albedo);
     }
-    
+
     // Spot lights
-    for (int i = 0; i < numSpotLights; ++i) {
-        vec3 L = normalize(spotLights[i].position - position);
-        float distance = length(spotLights[i].position - position);
-        float attenuation = calculateAttenuation(distance, spotLights[i].constant, spotLights[i].linear, spotLights[i].quadratic);
-        
+    for (int i = 0; i < numSpotLights && i < MAX_SPOT_LIGHTS; ++i) {
+        vec3 Lvec = spotLights[i].position - FragPos;
+        float dist = length(Lvec);
+        vec3 L = Lvec / max(dist, 1e-4);
+
+        float c = max(spotLights[i].constant, 0.0001);
+        float l = max(spotLights[i].linear, 0.0);
+        float q = max(spotLights[i].quadratic, 0.0);
+        float attenuation = 1.0 / (c + l * dist + q * dist * dist);
+
+        // Spot cone attenuation (angles in degrees, match forward shader)
         float theta = dot(L, normalize(-spotLights[i].direction));
-        float innerAngle = radians(spotLights[i].innerConeAngle);
-        float outerAngle = radians(spotLights[i].outerConeAngle);
-        float epsilon = cos(innerAngle) - cos(outerAngle);
-        float intensity = clamp((theta - cos(outerAngle)) / epsilon, 0.0, 1.0);
-        
-        vec3 radiance = spotLights[i].color * spotLights[i].intensity * attenuation * intensity;
-        
-        Lo += calculatePBR(normal, V, L, radiance, albedo, metallic, roughness);
+        float innerCos = cos(radians(spotLights[i].innerConeAngle));
+        float outerCos = cos(radians(spotLights[i].outerConeAngle));
+        float epsilon = innerCos - outerCos;
+        float spotIntensity = clamp((theta - outerCos) / max(epsilon, 1e-4), 0.0, 1.0);
+
+        attenuation *= spotIntensity;
+        attenuation = clamp(attenuation, 0.0, 1.0);
+
+        vec3 radiance = spotLights[i].color * spotLights[i].intensity * attenuation;
+        Lo += calculateLighting(L, radiance, N, V, F0, roughness, metallic, Albedo);
     }
-    
-    // Ambient lighting
-    vec3 ambient = ambientLight * albedo * ao;
-    
+
+    vec3 ambient = ambientLight * Albedo * ao;
     vec3 color = ambient + Lo;
-    
-    // HDR tonemapping
+
+    // Tone map + gamma
     color = color / (color + vec3(1.0));
-    
-    // Gamma correction
-    color = pow(color, vec3(1.0 / 2.2));
-    
+    color = pow(color, vec3(1.0/2.2));
+
     FragColor = vec4(color, 1.0);
 }
