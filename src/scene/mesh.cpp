@@ -52,6 +52,69 @@ void Mesh::setIndices(const std::vector<uint32_t>& i) {
     indices = i;
 }
 
+// ================= compute tangents =================
+void Mesh::computeTangents()
+{
+    if (indices.empty() || vertices.empty()) {
+        return;
+    }
+    
+    // Initialize tangent and bitangent to zero
+    for (auto& v : vertices) {
+        v.tangent = glm::vec3(0.0f);
+        v.bitangent = glm::vec3(0.0f);
+    }
+    
+    // Calculate tangents and bitangents per triangle
+    // Reference: https://learnopengl.com/Advanced-Lighting/Normal-Mapping
+    for (size_t i = 0; i < indices.size(); i += 3) {
+        uint32_t i0 = indices[i];
+        uint32_t i1 = indices[i + 1];
+        uint32_t i2 = indices[i + 2];
+        
+        glm::vec3& v0 = vertices[i0].position;
+        glm::vec3& v1 = vertices[i1].position;
+        glm::vec3& v2 = vertices[i2].position;
+        
+        glm::vec2& uv0 = vertices[i0].uv;
+        glm::vec2& uv1 = vertices[i1].uv;
+        glm::vec2& uv2 = vertices[i2].uv;
+        
+        glm::vec3 edge1 = v1 - v0;
+        glm::vec3 edge2 = v2 - v0;
+        glm::vec2 deltaUV1 = uv1 - uv0;
+        glm::vec2 deltaUV2 = uv2 - uv0;
+        
+        float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
+        
+        glm::vec3 tangent;
+        tangent.x = f * (deltaUV2.y * edge1.x - deltaUV1.y * edge2.x);
+        tangent.y = f * (deltaUV2.y * edge1.y - deltaUV1.y * edge2.y);
+        tangent.z = f * (deltaUV2.y * edge1.z - deltaUV1.y * edge2.z);
+        
+        glm::vec3 bitangent;
+        bitangent.x = f * (-deltaUV2.x * edge1.x + deltaUV1.x * edge2.x);
+        bitangent.y = f * (-deltaUV2.x * edge1.y + deltaUV1.x * edge2.y);
+        bitangent.z = f * (-deltaUV2.x * edge1.z + deltaUV1.x * edge2.z);
+        
+        // Accumulate tangents and bitangents
+        vertices[i0].tangent += tangent;
+        vertices[i1].tangent += tangent;
+        vertices[i2].tangent += tangent;
+        
+        vertices[i0].bitangent += bitangent;
+        vertices[i1].bitangent += bitangent;
+        vertices[i2].bitangent += bitangent;
+    }
+    
+    // Normalize and orthogonalize tangents/bitangents
+    for (auto& v : vertices) {
+        // Gram-Schmidt orthogonalize
+        v.tangent = glm::normalize(v.tangent - glm::dot(v.tangent, v.normal) * v.normal);
+        v.bitangent = glm::normalize(v.bitangent);
+    }
+}
+
 // ================= GPU upload =================
 void Mesh::upload() 
 {

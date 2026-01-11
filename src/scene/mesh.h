@@ -42,6 +42,9 @@ public:
     void setName(const std::string& name) { this->name_ = name; }
     void setFaceCount(uint32_t count) { this->face_count_ = count; }
 
+    // Compute tangent and bitangent vectors for normal mapping
+    void computeTangents();
+
     // GPU upload
     void upload();
 

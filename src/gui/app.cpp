@@ -25,6 +25,7 @@
 #include <cstring>
 #include <ctime>
 #include <sys/stat.h>
+#include <filesystem>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -1154,6 +1155,10 @@ void App::LoadUsdFile(const std::string& filepath)
 void App::OpenFileDialog()
 {
 #ifdef _WIN32
+    // Save current working directory before opening file dialog
+    // GetOpenFileNameW can change the current directory
+    std::filesystem::path originalCwd = std::filesystem::current_path();
+    
     OPENFILENAMEW ofn;
     wchar_t szFile[260] = {0};
     
@@ -1170,6 +1175,9 @@ void App::OpenFileDialog()
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
     
     if (GetOpenFileNameW(&ofn) == TRUE) {
+        // Restore original working directory
+        std::filesystem::current_path(originalCwd);
+        
         // Convert wide char to UTF-8
         int size = WideCharToMultiByte(CP_UTF8, 0, szFile, -1, nullptr, 0, nullptr, nullptr);
         if (size > 0) {
@@ -1177,6 +1185,9 @@ void App::OpenFileDialog()
             WideCharToMultiByte(CP_UTF8, 0, szFile, -1, &utf8Path[0], size, nullptr, nullptr);
             LoadUsdFile(utf8Path);
         }
+    } else {
+        // Restore original working directory even if dialog was cancelled
+        std::filesystem::current_path(originalCwd);
     }
 #else
     std::cerr << "File dialog not implemented for this platform\n";

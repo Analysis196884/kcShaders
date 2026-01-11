@@ -577,57 +577,11 @@ bool UsdLoader::ProcessMesh(void* meshPtr, SceneNode* node) {
         }
     }
     
-    // Calculate tangents and bitangents
-    // Reference: https://learnopengl.com/Advanced-Lighting/Normal-Mapping
-    for (size_t i = 0; i < indices.size(); i += 3) {
-        uint32_t i0 = indices[i];
-        uint32_t i1 = indices[i + 1];
-        uint32_t i2 = indices[i + 2];
-        
-        glm::vec3& v0 = vertices[i0].position;
-        glm::vec3& v1 = vertices[i1].position;
-        glm::vec3& v2 = vertices[i2].position;
-        
-        glm::vec2& uv0 = vertices[i0].uv;
-        glm::vec2& uv1 = vertices[i1].uv;
-        glm::vec2& uv2 = vertices[i2].uv;
-        
-        glm::vec3 edge1 = v1 - v0;
-        glm::vec3 edge2 = v2 - v0;
-        glm::vec2 deltaUV1 = uv1 - uv0;
-        glm::vec2 deltaUV2 = uv2 - uv0;
-        
-        float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
-        
-        glm::vec3 tangent;
-        tangent.x = f * (deltaUV2.y * edge1.x - deltaUV1.y * edge2.x);
-        tangent.y = f * (deltaUV2.y * edge1.y - deltaUV1.y * edge2.y);
-        tangent.z = f * (deltaUV2.y * edge1.z - deltaUV1.y * edge2.z);
-        
-        glm::vec3 bitangent;
-        bitangent.x = f * (-deltaUV2.x * edge1.x + deltaUV1.x * edge2.x);
-        bitangent.y = f * (-deltaUV2.x * edge1.y + deltaUV1.x * edge2.y);
-        bitangent.z = f * (-deltaUV2.x * edge1.z + deltaUV1.x * edge2.z);
-        
-        // Accumulate tangents and bitangents
-        vertices[i0].tangent += tangent;
-        vertices[i1].tangent += tangent;
-        vertices[i2].tangent += tangent;
-        
-        vertices[i0].bitangent += bitangent;
-        vertices[i1].bitangent += bitangent;
-        vertices[i2].bitangent += bitangent;
-    }
-    
-    // Normalize and orthogonalize tangents/bitangents
-    for (auto& v : vertices) {
-        // Gram-Schmidt orthogonalize
-        v.tangent = glm::normalize(v.tangent - glm::dot(v.tangent, v.normal) * v.normal);
-        v.bitangent = glm::normalize(v.bitangent);
-    }
-
     // Create mesh object
     node->mesh = new Mesh(vertices, indices);
+    
+    // Calculate tangents and bitangents for normal mapping
+    node->mesh->computeTangents();
     node->mesh->setName(usdMesh->GetPrim().GetName().GetString());
     
     // Store original face count (before triangulation)
@@ -803,53 +757,50 @@ bool UsdLoader::ProcessMaterial(void* primPtr, SceneNode* node)
         }
 
         // Metallic
-        if (UsdAttribute metallicAttr = surfaceShader.GetInput(TfToken("metallic"))) {
+        if (UsdShadeInput metallicInput = surfaceShader.GetInput(TfToken("metallic"))) {
+            // First try to get as float value
             float metallic = 0.0f;
-            if (metallicAttr.Get(&metallic)) {
+            if (metallicInput.Get(&metallic)) {
                 newMaterial->metallic = metallic;
-            } else {
-                // Try to load metallic texture
-                SdfAssetPath assetPath;
-                if (metallicAttr.Get(&assetPath)) {
-                    std::string texturePath = assetPath.GetAssetPath();
-                    if (!texturePath.empty()) {
-                        newMaterial->metallicMap = g_textureManager.loadTexture(texturePath);
-                    }
-                }
+            }
+            
+            // Try to load metallic texture from connected shader
+            std::string texturePath = GetTexturePathFromConnectedInput(metallicInput);
+            if (!texturePath.empty()) {
+                GLuint texId = g_textureManager.loadTexture(texturePath);
+                newMaterial->metallicMap = texId;
             }
         }
 
         // Roughness
-        if (UsdAttribute roughnessAttr = surfaceShader.GetInput(TfToken("roughness"))) {
+        if (UsdShadeInput roughnessInput = surfaceShader.GetInput(TfToken("roughness"))) {
+            // First try to get as float value
             float roughness = 0.5f;
-            if (roughnessAttr.Get(&roughness)) {
+            if (roughnessInput.Get(&roughness)) {
                 newMaterial->roughness = roughness;
-            } else {
-                // Try to load roughness texture
-                SdfAssetPath assetPath;
-                if (roughnessAttr.Get(&assetPath)) {
-                    std::string texturePath = assetPath.GetAssetPath();
-                    if (!texturePath.empty()) {
-                        newMaterial->roughnessMap = g_textureManager.loadTexture(texturePath);
-                    }
-                }
+            }
+            
+            // Try to load roughness texture from connected shader
+            std::string texturePath = GetTexturePathFromConnectedInput(roughnessInput);
+            if (!texturePath.empty()) {
+                GLuint texId = g_textureManager.loadTexture(texturePath);
+                newMaterial->roughnessMap = texId;
             }
         }
 
         // Ambient Occlusion
-        if (UsdAttribute aoAttr = surfaceShader.GetInput(TfToken("occlusion"))) {
+        if (UsdShadeInput aoInput = surfaceShader.GetInput(TfToken("occlusion"))) {
+            // First try to get as float value
             float ao = 1.0f;
-            if (aoAttr.Get(&ao)) {
+            if (aoInput.Get(&ao)) {
                 newMaterial->ao = ao;
-            } else {
-                // Try to load AO texture
-                SdfAssetPath assetPath;
-                if (aoAttr.Get(&assetPath)) {
-                    std::string texturePath = assetPath.GetAssetPath();
-                    if (!texturePath.empty()) {
-                        newMaterial->aoMap = g_textureManager.loadTexture(texturePath);
-                    }
-                }
+            }
+            
+            // Try to load AO texture from connected shader
+            std::string texturePath = GetTexturePathFromConnectedInput(aoInput);
+            if (!texturePath.empty()) {
+                GLuint texId = g_textureManager.loadTexture(texturePath);
+                newMaterial->aoMap = texId;
             }
         }
 
@@ -869,19 +820,18 @@ bool UsdLoader::ProcessMaterial(void* primPtr, SceneNode* node)
         }
 
         // Emissive color
-        if (UsdAttribute emissiveAttr = surfaceShader.GetInput(TfToken("emissive"))) {
+        if (UsdShadeInput emissiveInput = surfaceShader.GetInput(TfToken("emissive"))) {
+            // First try to get as color value
             GfVec3f emissive;
-            if (emissiveAttr.Get(&emissive)) {
+            if (emissiveInput.Get(&emissive)) {
                 newMaterial->emissive = glm::vec3(emissive[0], emissive[1], emissive[2]);
-            } else {
-                // Try to load emissive texture
-                SdfAssetPath assetPath;
-                if (emissiveAttr.Get(&assetPath)) {
-                    std::string texturePath = assetPath.GetAssetPath();
-                    if (!texturePath.empty()) {
-                        newMaterial->emissiveMap = g_textureManager.loadTexture(texturePath);
-                    }
-                }
+            }
+            
+            // Try to load emissive texture from connected shader
+            std::string texturePath = GetTexturePathFromConnectedInput(emissiveInput);
+            if (!texturePath.empty()) {
+                GLuint texId = g_textureManager.loadTexture(texturePath);
+                newMaterial->emissiveMap = texId;
             }
         }
 

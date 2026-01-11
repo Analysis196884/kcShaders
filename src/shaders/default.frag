@@ -248,13 +248,13 @@ void main()
     // Metallic texture (R channel, grayscale)
     if (hasMetallicMap) {
         vec4 metallicSample = texture(metallicMap, TexCoord);
-        metallic = metallicSample.r;
+        metallic = metallicSample.b;
     }
     
     // Roughness texture (R channel, grayscale)
     if (hasRoughnessMap) {
         vec4 roughnessSample = texture(roughnessMap, TexCoord);
-        roughness = roughnessSample.r;
+        roughness = roughnessSample.g;
     }
     
     // AO texture (R channel, grayscale)

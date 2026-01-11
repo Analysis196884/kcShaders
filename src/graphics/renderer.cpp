@@ -632,6 +632,16 @@ void Renderer::resize_framebuffer(int width, int height)
 
 bool Renderer::take_screenshot(const std::string& filename)
 {
+    if (fbo_ == 0 || fbo_texture_ == 0) {
+        std::cerr << "ERROR: Framebuffer not initialized" << std::endl;
+        return false;
+    }
+    
+    if (fb_width_ <= 0 || fb_height_ <= 0) {
+        std::cerr << "ERROR: Invalid framebuffer dimensions: " << fb_width_ << "x" << fb_height_ << std::endl;
+        return false;
+    }
+    
     // Set pixel alignment for proper row reading
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     
@@ -642,15 +652,25 @@ bool Renderer::take_screenshot(const std::string& filename)
     glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo_);
     glReadBuffer(GL_COLOR_ATTACHMENT0);
     
-    // Check what we're reading from
-    GLint readFBO;
-    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readFBO);
+    // Check OpenGL errors
+    GLenum error = glGetError();
+    if (error != GL_NO_ERROR) {
+        std::cerr << "OpenGL error before reading pixels: " << error << std::endl;
+    }
     
     // Read the pixels from bottom to top (OpenGL origin is bottom-left)
     // We read directly in the correct order to avoid manual flipping
     for (int y = 0; y < fb_height_; ++y) {
         glReadPixels(0, fb_height_ - 1 - y, fb_width_, 1, GL_RGB, GL_UNSIGNED_BYTE, 
                      pixels.data() + (y * fb_width_ * 3));
+    }
+    
+    // Check OpenGL errors
+    error = glGetError();
+    if (error != GL_NO_ERROR) {
+        std::cerr << "OpenGL error after reading pixels: " << error << std::endl;
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+        return false;
     }
     
     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
@@ -661,13 +681,14 @@ bool Renderer::take_screenshot(const std::string& filename)
     // Write to file
     int result = stbi_write_png(filename.c_str(), fb_width_, fb_height_, 3, pixels.data(), fb_width_ * 3);
     
-    if (result) {
-        std::cout << "Screenshot saved: " << filename << std::endl;
-        return true;
-    } else {
-        std::cerr << "Failed to save screenshot: " << filename << std::endl;
+    if (result == 0) {
+        std::cerr << "stbi_write_png failed for: " << filename << std::endl;
+        std::cerr << "  Dimensions: " << fb_width_ << "x" << fb_height_ << std::endl;
+        std::cerr << "  Data size: " << pixels.size() << " bytes" << std::endl;
         return false;
     }
+    
+    return true;
 }
 
 } // namespace kcShaders

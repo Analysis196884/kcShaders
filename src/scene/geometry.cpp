@@ -91,6 +91,7 @@ Mesh* create_plane(float width, float height, int segments_w, int segments_h)
     mesh->setVertices(vertices);
     mesh->setIndices(indices);
     mesh->setName("Plane");
+    mesh->computeTangents();
     mesh->upload();
     return mesh;
 }
@@ -143,6 +144,7 @@ Mesh* create_cube(float size)
     mesh->setVertices(vertices);
     mesh->setIndices(indices);
     mesh->setName("Cube");
+    mesh->computeTangents();
     mesh->upload();
     return mesh;
 }
@@ -196,6 +198,7 @@ Mesh* create_sphere(float radius, int segments_lat, int segments_lon)
     mesh->setVertices(vertices);
     mesh->setIndices(indices);
     mesh->setName("Sphere");
+    mesh->computeTangents();
     mesh->upload();
     return mesh;
 }
