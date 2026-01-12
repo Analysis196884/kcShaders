@@ -1,14 +1,7 @@
-#version 330 core
+// Demo Shadertoy: Rotating Cube
 
-out vec4 FragColor;
-
-in vec2 vUV;
-
-uniform vec3 iResolution;
-uniform float iTime;
-
-// Signed Distance Function for the box
-float sdBox(vec3 p, vec3 b) // b: half size of the box
+// Signed Distance Function for the cube
+float sdcube(vec3 p, vec3 b) // b: half size of the cube
 {
     vec3 d = abs(p) - b;
     return min(max(d.x, max(d.y, d.z)), 0.0) + length(max(d, 0.0));
@@ -38,10 +31,10 @@ mat3 rotX(float a)
 // signed distance function for the scene
 float map(vec3 p)
 {
-    // rotate the box over time
+    // rotate the cube over time
     p = rotY(iTime * 0.8) * rotX(iTime * 0.6) * p;
 
-    return sdBox(p, vec3(0.5));
+    return sdcube(p, vec3(0.5));
 }
 
 // normal calculation
@@ -57,10 +50,10 @@ vec3 calcNormal(vec3 p)
     );
 }
 
-void main()
+void mainImage(out vec4 fragColor, in vec2 fragCoord)
 {
     // screen coordinate to ray direction
-    vec2 uv = (vUV * 2.0 - 1.0);
+    vec2 uv = fragCoord.xy / iResolution.xy * 2.0 - 1.0;
     uv.x *= iResolution.x / iResolution.y;
 
     vec3 ro = vec3(0.0, 0.0, 3.0); // camera position
@@ -80,7 +73,7 @@ void main()
 
     if (t > 20.0)
     {
-        FragColor = vec4(0.6, 0.8, 1.0, 1.0);
+        fragColor = vec4(0.6, 0.8, 1.0, 1.0);
         return;
     }
 
@@ -94,5 +87,5 @@ void main()
 
     vec3 col = vec3(0.2, 0.6, 1.0) * diff + vec3(0.1);
 
-    FragColor = vec4(col, 1.0);
+    fragColor = vec4(col, 1.0);
 }

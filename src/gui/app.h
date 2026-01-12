@@ -116,9 +116,24 @@ private:
     char light_vert_shader_path_[256];
     char light_frag_shader_path_[256];
     
+    // Shadertoy shader paths
+    char shadertoy_vert_shader_path_[256];
+    char shadertoy_frag_shader_path_[256];
+    
     // Shader file watch
     time_t last_vertex_mod_time_;
     time_t last_fragment_mod_time_;
+    
+    // Deferred shader file watch
+    time_t last_geom_vert_mod_time_;
+    time_t last_geom_frag_mod_time_;
+    time_t last_light_vert_mod_time_;
+    time_t last_light_frag_mod_time_;
+    
+    // Shadertoy shader file watch
+    time_t last_shadertoy_vert_mod_time_;
+    time_t last_shadertoy_frag_mod_time_;
+    
     float shader_check_timer_;
     
     // Fonts

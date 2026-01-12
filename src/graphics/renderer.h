@@ -14,6 +14,7 @@ class GBuffer;
 class RenderPipeline;
 class ForwardPipeline;
 class DeferredPipeline;
+class ShadertoyPipeline;
 
 class Renderer {
   public:
@@ -45,6 +46,7 @@ class Renderer {
         const std::string& light_vert = "../../src/shaders/deferred_lighting.vert",
         const std::string& light_frag = "../../src/shaders/deferred_lighting.frag"
     );
+    bool loadShadertoyShaders(const std::string& vertex_path, const std::string& fragment_path);
 
   private:
     void create_framebuffer();
@@ -78,6 +80,7 @@ class Renderer {
     // Rendering pipelines
     std::unique_ptr<ForwardPipeline> forwardPipeline_;
     std::unique_ptr<DeferredPipeline> deferredPipeline_;
+    std::unique_ptr<ShadertoyPipeline> shadertoyPipeline_;
     RenderPipeline* activePipeline_;  // Non-owning pointer to active pipeline
     
     // Fullscreen quad for deferred rendering

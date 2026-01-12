@@ -43,6 +43,37 @@ bool ShaderProgram::loadFromFiles(const std::string& vertPath, const std::string
     return success;
 }
 
+bool ShaderProgram::loadFromSource(const std::string& vertSource, const std::string& fragSource, const std::string& geomSource) {
+    GLuint vertShader = 0, fragShader = 0, geomShader = 0;
+    
+    if (!compileShaderFromSource(vertShader, GL_VERTEX_SHADER, vertSource, "vertex")) {
+        return false;
+    }
+    
+    if (!compileShaderFromSource(fragShader, GL_FRAGMENT_SHADER, fragSource, "fragment")) {
+        glDeleteShader(vertShader);
+        return false;
+    }
+    
+    if (!geomSource.empty()) {
+        if (!compileShaderFromSource(geomShader, GL_GEOMETRY_SHADER, geomSource, "geometry")) {
+            glDeleteShader(vertShader);
+            glDeleteShader(fragShader);
+            return false;
+        }
+    }
+    
+    bool success = linkProgram(vertShader, fragShader, geomShader);
+    
+    glDeleteShader(vertShader);
+    glDeleteShader(fragShader);
+    if (geomShader != 0) {
+        glDeleteShader(geomShader);
+    }
+    
+    return success;
+}
+
 void ShaderProgram::use() const {
     glUseProgram(program_);
 }
@@ -109,6 +140,27 @@ bool ShaderProgram::compileShader(GLuint& shader, GLenum type, const std::string
         char infoLog[512];
         glGetShaderInfoLog(shader, 512, nullptr, infoLog);
         std::cerr << "Shader compilation failed (" << path << "):\n" << infoLog << std::endl;
+        glDeleteShader(shader);
+        shader = 0;
+        return false;
+    }
+    
+    return true;
+}
+
+bool ShaderProgram::compileShaderFromSource(GLuint& shader, GLenum type, const std::string& source, const std::string& label) {
+    const char* sourcePtr = source.c_str();
+    
+    shader = glCreateShader(type);
+    glShaderSource(shader, 1, &sourcePtr, nullptr);
+    glCompileShader(shader);
+    
+    GLint success;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        char infoLog[512];
+        glGetShaderInfoLog(shader, 512, nullptr, infoLog);
+        std::cerr << "Shader compilation failed (" << label << "):\n" << infoLog << std::endl;
         glDeleteShader(shader);
         shader = 0;
         return false;

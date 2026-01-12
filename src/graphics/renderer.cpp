@@ -9,6 +9,7 @@
 #include "pipeline/RenderPipeline.h"
 #include "pipeline/ForwardPipeline.h"
 #include "pipeline/DeferredPipeline.h"
+#include "pipeline/ShadertoyPipeline.h"
 
 #include <fstream>
 #include <sstream>
@@ -80,9 +81,16 @@ bool Renderer::initialize()
     // Create framebuffer
     create_framebuffer();
 
+    // Setup fullscreen quad (used by both deferred and shadertoy)
+    setupFullscreenQuad();
+
     // Create rendering pipelines
     forwardPipeline_ = std::make_unique<ForwardPipeline>(
         fbo_, fb_width_, fb_height_
+    );
+    
+    shadertoyPipeline_ = std::make_unique<ShadertoyPipeline>(
+        fbo_, quad_vao_, fb_width_, fb_height_
     );
     
     // Initialize G-Buffer for deferred rendering
@@ -92,7 +100,6 @@ bool Renderer::initialize()
         delete gbuffer_;
         gbuffer_ = nullptr;
     } else {
-        setupFullscreenQuad();
         deferredPipeline_ = std::make_unique<DeferredPipeline>(
             gbuffer_, fbo_, quad_vao_, fb_width_, fb_height_
         );
@@ -102,7 +109,6 @@ bool Renderer::initialize()
             deferredPipeline_.reset();
             delete gbuffer_;
             gbuffer_ = nullptr;
-            cleanupFullscreenQuad();
         } else {
             // Load deferred rendering shaders
             if (!loadDeferredShaders()) {
@@ -128,6 +134,7 @@ void Renderer::shutdown()
     activePipeline_ = nullptr;
     forwardPipeline_.reset();
     deferredPipeline_.reset();
+    shadertoyPipeline_.reset();
     
     // Clean up deferred rendering resources
     if (gbuffer_) {
@@ -157,31 +164,26 @@ void Renderer::clear(float r, float g, float b, float a)
 
 void Renderer::render_shadertoy()
 {
-    // TODO: Implement shadertoy rendering through pipeline system
-    // This function needs to be refactored to use a dedicated ShaderToy pipeline
-    
-    /*
-    // Bind framebuffer
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
-    glViewport(0, 0, fb_width_, fb_height_);
-    
-    // Clear framebuffer
-    glClearColor(0.1f, 0.1f, 0.12f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    
-    // Render scene with shadertoy uniforms
-    if (vao_ > 0) 
-    {
-        // Use appropriate shader and set uniforms
-        // iResolution, iTime, iMouse, etc.
-        glBindVertexArray(vao_);
-        glDrawArrays(GL_TRIANGLES, 0, vertex_count_);
-        glBindVertexArray(0);
+    if (!shadertoyPipeline_) {
+        std::cerr << "[Renderer] Shadertoy pipeline not available\n";
+        return;
     }
     
-    // Unbind framebuffer
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    */
+    // Create minimal render context for shadertoy
+    RenderContext ctx;
+    ctx.viewportWidth = fb_width_;
+    ctx.viewportHeight = fb_height_;
+    
+    // Get time from GLFW
+    static float startTime = glfwGetTime();
+    float currentTime = glfwGetTime();
+    static float lastTime = currentTime;
+    
+    ctx.totalTime = currentTime - startTime;
+    ctx.deltaTime = currentTime - lastTime;
+    lastTime = currentTime;
+    
+    shadertoyPipeline_->execute(ctx);
 }
 
 void Renderer::render_forward(Scene* scene, Camera* camera)
@@ -312,6 +314,9 @@ void Renderer::resize_framebuffer(int width, int height)
     if (deferredPipeline_) {
         deferredPipeline_->resize(width, height);
     }
+    if (shadertoyPipeline_) {
+        shadertoyPipeline_->resize(width, height);
+    }
 }
 
 bool Renderer::take_screenshot(const std::string& filename)
@@ -428,6 +433,16 @@ bool Renderer::loadDeferredShaders(
     }
     
     return deferredPipeline_->loadShaders(geom_vert, geom_frag, light_vert, light_frag);
+}
+
+bool Renderer::loadShadertoyShaders(const std::string& vertex_path, const std::string& fragment_path)
+{
+    if (!shadertoyPipeline_) {
+        std::cerr << "[Renderer] Shadertoy pipeline not initialized\n";
+        return false;
+    }
+    
+    return shadertoyPipeline_->loadShaders(vertex_path, fragment_path);
 }
 
 } // namespace kcShaders

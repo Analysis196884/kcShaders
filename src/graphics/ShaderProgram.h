@@ -18,6 +18,7 @@ public:
 
     // Load and compile shaders
     bool loadFromFiles(const std::string& vertPath, const std::string& fragPath, const std::string& geomPath = "");
+    bool loadFromSource(const std::string& vertSource, const std::string& fragSource, const std::string& geomSource = "");
     
     // Use this shader program
     void use() const;
@@ -38,6 +39,7 @@ public:
 
 private:
     bool compileShader(GLuint& shader, GLenum type, const std::string& path);
+    bool compileShaderFromSource(GLuint& shader, GLenum type, const std::string& source, const std::string& label = "shader");
     bool linkProgram(GLuint vertShader, GLuint fragShader, GLuint geomShader = 0);
     
     GLuint program_ = 0;

@@ -51,6 +51,12 @@ App::App(const std::string& title)
     , render_mode_(RenderMode::DeferredRendering)
     , last_vertex_mod_time_(0)
     , last_fragment_mod_time_(0)
+    , last_geom_vert_mod_time_(0)
+    , last_geom_frag_mod_time_(0)
+    , last_light_vert_mod_time_(0)
+    , last_light_frag_mod_time_(0)
+    , last_shadertoy_vert_mod_time_(0)
+    , last_shadertoy_frag_mod_time_(0)
     , shader_check_timer_(0.0f)
     , regular_font_(nullptr)
     , mono_font_(nullptr)
@@ -67,6 +73,10 @@ App::App(const std::string& title)
     strncpy_s(geom_frag_shader_path_, "../../src/shaders/deferred_geometry.frag", sizeof(geom_frag_shader_path_) - 1);
     strncpy_s(light_vert_shader_path_, "../../src/shaders/deferred_lighting.vert", sizeof(light_vert_shader_path_) - 1);
     strncpy_s(light_frag_shader_path_, "../../src/shaders/deferred_lighting.frag", sizeof(light_frag_shader_path_) - 1);
+    
+    // Initialize shadertoy shader paths with defaults
+    strncpy_s(shadertoy_vert_shader_path_, "../../src/shaders/shadertoy/default.vert", sizeof(shadertoy_vert_shader_path_) - 1);
+    strncpy_s(shadertoy_frag_shader_path_, "../../src/shaders/shadertoy/demo.frag", sizeof(shadertoy_frag_shader_path_) - 1);
     
     // Load config (will override defaults if file exists)
     LoadConfig();
@@ -627,6 +637,11 @@ void App::RenderControlPanel()
                 
             case RenderMode::Shadertoy:
                 std::cout << "Switched to Shadertoy mode\n";
+                if (!renderer_->loadShadertoyShaders(shadertoy_vert_shader_path_, shadertoy_frag_shader_path_)) {
+                    std::cerr << "Failed to load shadertoy shaders\n";
+                } else {
+                    std::cout << "Shadertoy shaders loaded successfully\n";
+                }
                 break;
                 
             case RenderMode::RayTracing:
@@ -728,6 +743,24 @@ void App::RenderShaderEditorPanel()
     ImGui::Text("Fragment:");
     ImGui::SameLine();
     ImGui::InputText("##LightFrag", light_frag_shader_path_, sizeof(light_frag_shader_path_));
+    ImGui::Unindent();
+    
+    ImGui::Spacing();
+    ImGui::Spacing();
+    
+    // Shadertoy Shaders
+    ImGui::Text("Shadertoy Shaders");
+    ImGui::Separator();
+    
+    // Vertex shader path input
+    ImGui::Text("Vertex Shader:");
+    ImGui::SameLine();
+    ImGui::InputText("##ShadertoyVert", shadertoy_vert_shader_path_, sizeof(shadertoy_vert_shader_path_));
+    
+    // Fragment shader path input
+    ImGui::Text("Fragment Shader:");
+    ImGui::SameLine();
+    ImGui::InputText("##ShadertoyFrag", shadertoy_frag_shader_path_, sizeof(shadertoy_frag_shader_path_));
     
     ImGui::End();
 }
@@ -998,6 +1031,20 @@ void App::LoadConfig()
                     strcpy_s(light_frag_shader_path_, sizeof(light_frag_shader_path_), path.c_str());
                 }
             }
+            else if (line.find("shadertoy_vert_shader=") == 0) 
+            {
+                std::string path = line.substr(22);
+                if (!path.empty() && path.length() < sizeof(shadertoy_vert_shader_path_)) {
+                    strcpy_s(shadertoy_vert_shader_path_, sizeof(shadertoy_vert_shader_path_), path.c_str());
+                }
+            }
+            else if (line.find("shadertoy_frag_shader=") == 0) 
+            {
+                std::string path = line.substr(22);
+                if (!path.empty() && path.length() < sizeof(shadertoy_frag_shader_path_)) {
+                    strcpy_s(shadertoy_frag_shader_path_, sizeof(shadertoy_frag_shader_path_), path.c_str());
+                }
+            }
         }
         config_file.close();
     } else {
@@ -1015,6 +1062,8 @@ void App::SaveConfig()
         config_file << "geom_frag_shader=" << geom_frag_shader_path_ << "\n";
         config_file << "light_vert_shader=" << light_vert_shader_path_ << "\n";
         config_file << "light_frag_shader=" << light_frag_shader_path_ << "\n";
+        config_file << "shadertoy_vert_shader=" << shadertoy_vert_shader_path_ << "\n";
+        config_file << "shadertoy_frag_shader=" << shadertoy_frag_shader_path_ << "\n";
         config_file.close();
     }
 }
@@ -1032,39 +1081,121 @@ void App::CheckShaderFileChanges()
 {
     if (!renderer_) return;
     
-    std::string vertex_path(vertex_shader_path_);
-    std::string fragment_path(fragment_shader_path_);
-    // If both paths are empty, nothing to watch
-    if (vertex_path.empty() && fragment_path.empty()) {
-        return;
-    }
+    switch (render_mode_) {
+        case RenderMode::ForwardRendering: {
+            std::string vertex_path(vertex_shader_path_);
+            std::string fragment_path(fragment_shader_path_);
+            
+            if (vertex_path.empty() && fragment_path.empty()) {
+                return;
+            }
 
-    std::time_t vertex_mod = vertex_path.empty() ? 0 : GetFileModTime(vertex_path);
-    std::time_t fragment_mod = fragment_path.empty() ? 0 : GetFileModTime(fragment_path);
+            std::time_t vertex_mod = vertex_path.empty() ? 0 : GetFileModTime(vertex_path);
+            std::time_t fragment_mod = fragment_path.empty() ? 0 : GetFileModTime(fragment_path);
 
-    bool vertex_changed = (!vertex_path.empty() && vertex_mod != 0 && vertex_mod != last_vertex_mod_time_);
-    bool fragment_changed = (!fragment_path.empty() && fragment_mod != 0 && fragment_mod != last_fragment_mod_time_);
+            bool vertex_changed = (!vertex_path.empty() && vertex_mod != 0 && vertex_mod != last_vertex_mod_time_);
+            bool fragment_changed = (!fragment_path.empty() && fragment_mod != 0 && fragment_mod != last_fragment_mod_time_);
 
-    // Initialize on first check for provided paths
-    if (( !vertex_path.empty() && last_vertex_mod_time_ == 0) || ( !fragment_path.empty() && last_fragment_mod_time_ == 0)) 
-    {
-        if (!vertex_path.empty()) last_vertex_mod_time_ = vertex_mod;
-        if (!fragment_path.empty()) last_fragment_mod_time_ = fragment_mod;
-        return;
-    }
+            // Initialize on first check
+            if ((!vertex_path.empty() && last_vertex_mod_time_ == 0) || (!fragment_path.empty() && last_fragment_mod_time_ == 0)) {
+                if (!vertex_path.empty()) last_vertex_mod_time_ = vertex_mod;
+                if (!fragment_path.empty()) last_fragment_mod_time_ = fragment_mod;
+                return;
+            }
 
-    if (vertex_changed || fragment_changed) 
-    {
-        std::cout << "Shader file changed, reloading...\n";
-
-        if (renderer_->loadForwardShaders(vertex_path, fragment_path)) 
-        {
-            std::cout << "Shader reloaded successfully\n";
-            if (vertex_changed) last_vertex_mod_time_ = vertex_mod;
-            if (fragment_changed) last_fragment_mod_time_ = fragment_mod;
-        } else {
-            // std::cerr << "Failed to reload shader\n";
+            if (vertex_changed || fragment_changed) {
+                std::cout << "[Forward] Shader file changed, reloading...\n";
+                if (renderer_->loadForwardShaders(vertex_path, fragment_path)) {
+                    std::cout << "[Forward] Shader reloaded successfully\n";
+                    if (vertex_changed) last_vertex_mod_time_ = vertex_mod;
+                    if (fragment_changed) last_fragment_mod_time_ = fragment_mod;
+                }
+            }
+            break;
         }
+        
+        case RenderMode::DeferredRendering: {
+            std::string geom_vert_path(geom_vert_shader_path_);
+            std::string geom_frag_path(geom_frag_shader_path_);
+            std::string light_vert_path(light_vert_shader_path_);
+            std::string light_frag_path(light_frag_shader_path_);
+            
+            if (geom_vert_path.empty() && geom_frag_path.empty() && 
+                light_vert_path.empty() && light_frag_path.empty()) {
+                return;
+            }
+
+            std::time_t geom_vert_mod = geom_vert_path.empty() ? 0 : GetFileModTime(geom_vert_path);
+            std::time_t geom_frag_mod = geom_frag_path.empty() ? 0 : GetFileModTime(geom_frag_path);
+            std::time_t light_vert_mod = light_vert_path.empty() ? 0 : GetFileModTime(light_vert_path);
+            std::time_t light_frag_mod = light_frag_path.empty() ? 0 : GetFileModTime(light_frag_path);
+
+            bool geom_vert_changed = (!geom_vert_path.empty() && geom_vert_mod != 0 && geom_vert_mod != last_geom_vert_mod_time_);
+            bool geom_frag_changed = (!geom_frag_path.empty() && geom_frag_mod != 0 && geom_frag_mod != last_geom_frag_mod_time_);
+            bool light_vert_changed = (!light_vert_path.empty() && light_vert_mod != 0 && light_vert_mod != last_light_vert_mod_time_);
+            bool light_frag_changed = (!light_frag_path.empty() && light_frag_mod != 0 && light_frag_mod != last_light_frag_mod_time_);
+
+            // Initialize on first check
+            if ((!geom_vert_path.empty() && last_geom_vert_mod_time_ == 0) ||
+                (!geom_frag_path.empty() && last_geom_frag_mod_time_ == 0) ||
+                (!light_vert_path.empty() && last_light_vert_mod_time_ == 0) ||
+                (!light_frag_path.empty() && last_light_frag_mod_time_ == 0)) {
+                if (!geom_vert_path.empty()) last_geom_vert_mod_time_ = geom_vert_mod;
+                if (!geom_frag_path.empty()) last_geom_frag_mod_time_ = geom_frag_mod;
+                if (!light_vert_path.empty()) last_light_vert_mod_time_ = light_vert_mod;
+                if (!light_frag_path.empty()) last_light_frag_mod_time_ = light_frag_mod;
+                return;
+            }
+
+            if (geom_vert_changed || geom_frag_changed || light_vert_changed || light_frag_changed) {
+                std::cout << "[Deferred] Shader file changed, reloading...\n";
+                if (renderer_->loadDeferredShaders(geom_vert_path, geom_frag_path, light_vert_path, light_frag_path)) {
+                    std::cout << "[Deferred] Shaders reloaded successfully\n";
+                    if (geom_vert_changed) last_geom_vert_mod_time_ = geom_vert_mod;
+                    if (geom_frag_changed) last_geom_frag_mod_time_ = geom_frag_mod;
+                    if (light_vert_changed) last_light_vert_mod_time_ = light_vert_mod;
+                    if (light_frag_changed) last_light_frag_mod_time_ = light_frag_mod;
+                }
+            }
+            break;
+        }
+        
+        case RenderMode::Shadertoy: {
+            std::string vert_path(shadertoy_vert_shader_path_);
+            std::string frag_path(shadertoy_frag_shader_path_);
+            
+            if (vert_path.empty() && frag_path.empty()) {
+                return;
+            }
+
+            std::time_t vert_mod = vert_path.empty() ? 0 : GetFileModTime(vert_path);
+            std::time_t frag_mod = frag_path.empty() ? 0 : GetFileModTime(frag_path);
+
+            bool vert_changed = (!vert_path.empty() && vert_mod != 0 && vert_mod != last_shadertoy_vert_mod_time_);
+            bool frag_changed = (!frag_path.empty() && frag_mod != 0 && frag_mod != last_shadertoy_frag_mod_time_);
+
+            // Initialize on first check
+            if ((!vert_path.empty() && last_shadertoy_vert_mod_time_ == 0) || 
+                (!frag_path.empty() && last_shadertoy_frag_mod_time_ == 0)) {
+                if (!vert_path.empty()) last_shadertoy_vert_mod_time_ = vert_mod;
+                if (!frag_path.empty()) last_shadertoy_frag_mod_time_ = frag_mod;
+                return;
+            }
+
+            if (vert_changed || frag_changed) {
+                std::cout << "[Shadertoy] Shader file changed, reloading...\n";
+                if (renderer_->loadShadertoyShaders(vert_path, frag_path)) {
+                    std::cout << "[Shadertoy] Shaders reloaded successfully\n";
+                    if (vert_changed) last_shadertoy_vert_mod_time_ = vert_mod;
+                    if (frag_changed) last_shadertoy_frag_mod_time_ = frag_mod;
+                }
+            }
+            break;
+        }
+        
+        case RenderMode::RayTracing:
+            // Not implemented yet
+            break;
     }
 }
 
