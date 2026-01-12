@@ -39,7 +39,6 @@ Renderer::Renderer(GLFWwindow* window, int width, int height)
     , fb_width_(800)
     , fb_height_(600)
     , vertex_count_(0)
-    , use_deferred_(true)  // Enable deferred rendering by default
     , gbuffer_(nullptr)
     , activePipeline_(nullptr)
     , quad_vao_(0)
@@ -80,56 +79,42 @@ bool Renderer::initialize()
     
     // Create framebuffer
     create_framebuffer();
+
+    // Create rendering pipelines
+    forwardPipeline_ = std::make_unique<ForwardPipeline>(
+        fbo_, fb_width_, fb_height_
+    );
     
     // Initialize G-Buffer for deferred rendering
-    if (use_deferred_) {
-        gbuffer_ = new GBuffer();
-        if (!gbuffer_->initialize(fb_width_, fb_height_)) {
-            std::cerr << "Failed to initialize G-Buffer\n";
+    gbuffer_ = new GBuffer();
+    if (!gbuffer_->initialize(fb_width_, fb_height_)) {
+        std::cerr << "Failed to initialize G-Buffer\n";
+        delete gbuffer_;
+        gbuffer_ = nullptr;
+    } else {
+        setupFullscreenQuad();
+        deferredPipeline_ = std::make_unique<DeferredPipeline>(
+            gbuffer_, fbo_, quad_vao_, fb_width_, fb_height_
+        );
+        
+        if (!deferredPipeline_->initialize()) {
+            std::cerr << "Failed to initialize deferred pipeline\n";
+            deferredPipeline_.reset();
             delete gbuffer_;
             gbuffer_ = nullptr;
-            use_deferred_ = false;
+            cleanupFullscreenQuad();
         } else {
-            setupFullscreenQuad();
-            
-            // Create deferred pipeline
-            deferredPipeline_ = std::make_unique<DeferredPipeline>(
-                gbuffer_, fbo_, quad_vao_, fb_width_, fb_height_
-            );
-            if (!deferredPipeline_->initialize()) {
-                std::cerr << "Failed to initialize deferred pipeline\n";
+            // Load deferred rendering shaders
+            if (!loadDeferredShaders()) {
+                std::cerr << "Failed to load deferred shaders, falling back to forward rendering\n";
                 deferredPipeline_.reset();
                 delete gbuffer_;
                 gbuffer_ = nullptr;
                 cleanupFullscreenQuad();
-                use_deferred_ = false;
             } else {
-                // Load deferred rendering shaders
-                if (!loadDeferredShaders()) {
-                    std::cerr << "Failed to load deferred shaders, falling back to forward rendering\n";
-                    deferredPipeline_.reset();
-                    delete gbuffer_;
-                    gbuffer_ = nullptr;
-                    cleanupFullscreenQuad();
-                    use_deferred_ = false;
-                } else {
-                    activePipeline_ = deferredPipeline_.get();
-                }
+                activePipeline_ = deferredPipeline_.get();
             }
         }
-    }
-    
-    // Create forward pipeline (always available as fallback)
-    forwardPipeline_ = std::make_unique<ForwardPipeline>(fbo_, fb_width_, fb_height_);
-    if (!forwardPipeline_->initialize()) {
-        std::cerr << "Failed to initialize forward pipeline\n";
-        return false;
-    }
-    
-    // If deferred pipeline failed, use forward as active
-    if (!activePipeline_) {
-        activePipeline_ = forwardPipeline_.get();
-        use_deferred_ = false;
     }
 
     return true;
@@ -199,7 +184,7 @@ void Renderer::render_shadertoy()
     */
 }
 
-void Renderer::render_scene(Scene* scene, Camera* camera)
+void Renderer::render_forward(Scene* scene, Camera* camera)
 {
     if (!scene || !camera) {
         return;
@@ -207,22 +192,46 @@ void Renderer::render_scene(Scene* scene, Camera* camera)
     
     camera_ = camera;
     
-    // Use active pipeline
-    if (activePipeline_) {
-        RenderContext ctx;
-        ctx.scene = scene;
-        ctx.camera = camera;
-        ctx.viewportWidth = fb_width_;
-        ctx.viewportHeight = fb_height_;
-        ctx.gbuffer = gbuffer_;
-        ctx.deltaTime = 0.0f;
-        ctx.totalTime = 0.0f;
-        
-        activePipeline_->execute(ctx);
+    if (!forwardPipeline_) {
+        std::cerr << "[Renderer] Forward pipeline not available\n";
         return;
     }
     
-    std::cerr << "[Renderer] No active pipeline available\n";
+    RenderContext ctx;
+    ctx.scene = scene;
+    ctx.camera = camera;
+    ctx.viewportWidth = fb_width_;
+    ctx.viewportHeight = fb_height_;
+    ctx.gbuffer = nullptr;
+    ctx.deltaTime = 0.0f;
+    ctx.totalTime = 0.0f;
+    
+    forwardPipeline_->execute(ctx);
+}
+
+void Renderer::render_deferred(Scene* scene, Camera* camera)
+{
+    if (!scene || !camera) {
+        return;
+    }
+    
+    camera_ = camera;
+    
+    if (!deferredPipeline_) {
+        std::cerr << "[Renderer] Deferred pipeline not available\n";
+        return;
+    }
+    
+    RenderContext ctx;
+    ctx.scene = scene;
+    ctx.camera = camera;
+    ctx.viewportWidth = fb_width_;
+    ctx.viewportHeight = fb_height_;
+    ctx.gbuffer = gbuffer_;
+    ctx.deltaTime = 0.0f;
+    ctx.totalTime = 0.0f;
+    
+    deferredPipeline_->execute(ctx);
 }
 
 bool Renderer::loadForwardShaders(const std::string& vertex_path, const std::string& fragment_path)
@@ -419,25 +428,6 @@ bool Renderer::loadDeferredShaders(
     }
     
     return deferredPipeline_->loadShaders(geom_vert, geom_frag, light_vert, light_frag);
-}
-
-void Renderer::setDeferredRendering(bool enabled)
-{
-    if (enabled == use_deferred_) {
-        return; // Already in desired mode
-    }
-    
-    if (enabled && deferredPipeline_) {
-        activePipeline_ = deferredPipeline_.get();
-        use_deferred_ = true;
-        std::cout << "[Renderer] Switched to deferred rendering\n";
-    } else if (!enabled && forwardPipeline_) {
-        activePipeline_ = forwardPipeline_.get();
-        use_deferred_ = false;
-        std::cout << "[Renderer] Switched to forward rendering\n";
-    } else {
-        std::cerr << "[Renderer] Cannot switch rendering mode - pipeline not available\n";
-    }
 }
 
 } // namespace kcShaders

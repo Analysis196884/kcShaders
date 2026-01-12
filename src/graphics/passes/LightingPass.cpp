@@ -63,15 +63,15 @@ void LightingPass::execute(RenderContext& ctx) {
     }
     
     // Debug output
-    if (firstFrame_) {
-        glReadBuffer(GL_COLOR_ATTACHMENT0);
-        float pixel[4];
-        glReadPixels(fbWidth_/2, fbHeight_/2, 1, 1, GL_RGBA, GL_FLOAT, pixel);
-        std::cout << "[LightingPass] Center pixel output: (" 
-                  << pixel[0] << ", " << pixel[1] << ", " << pixel[2] << ", " << pixel[3] << ")\n";
-        std::cout << "[LightingPass] FBO: " << fbo_ << "\n";
-        firstFrame_ = false;
-    }
+    // if (firstFrame_) {
+    //     glReadBuffer(GL_COLOR_ATTACHMENT0);
+    //     float pixel[4];
+    //     glReadPixels(fbWidth_/2, fbHeight_/2, 1, 1, GL_RGBA, GL_FLOAT, pixel);
+    //     std::cout << "[LightingPass] Center pixel output: (" 
+    //               << pixel[0] << ", " << pixel[1] << ", " << pixel[2] << ", " << pixel[3] << ")\n";
+    //     std::cout << "[LightingPass] FBO: " << fbo_ << "\n";
+    //     firstFrame_ = false;
+    // }
     
     // Re-enable depth test
     glEnable(GL_DEPTH_TEST);

@@ -105,8 +105,6 @@ void DeferredPipeline::resize(int width, int height)
     for (auto& pass : passes_) {
         pass->resize(width, height);
     }
-    
-    std::cout << "[DeferredPipeline] Resized to " << width << "x" << height << "\n";
 }
 
 void DeferredPipeline::cleanup()

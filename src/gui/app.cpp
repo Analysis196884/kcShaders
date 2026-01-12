@@ -206,26 +206,6 @@ bool App::Initialize(const std::string& title)
         return false;
     }
 
-    // Load default shaders
-    std::string vpath(vertex_shader_path_);
-    std::string fpath(fragment_shader_path_);
-    if (!vpath.empty() && !fpath.empty()) {
-        if (renderer_->loadForwardShaders(vpath, fpath)) {
-            std::cout << "Default shaders loaded:\n";
-            std::cout << "  Vertex: " << vpath << "\n";
-            std::cout << "  Fragment: " << fpath << "\n";
-        }
-    }
-    
-    // Set initial rendering mode based on render_mode_
-    if (render_mode_ == RenderMode::DeferredRendering) {
-        renderer_->setDeferredRendering(true);
-        std::cout << "Initial mode: Deferred Rendering\n";
-    } else {
-        renderer_->setDeferredRendering(false);
-        std::cout << "Initial mode: Forward Rendering\n";
-    }
-
     // Load demo scene by default
     LoadDemoScene();
 
@@ -488,12 +468,13 @@ void App::Render()
     switch (render_mode_) {
         case RenderMode::ForwardRendering:
             if (current_scene_ && camera_) {
-                renderer_->render_scene(current_scene_, camera_);
+                renderer_->render_forward(current_scene_, camera_);
             }
             break;
+
         case RenderMode::DeferredRendering:
             if (current_scene_ && camera_) {
-                renderer_->render_scene(current_scene_, camera_);
+                renderer_->render_deferred(current_scene_, camera_);
             }
             break;
             
@@ -629,17 +610,22 @@ void App::RenderControlPanel()
         // Apply rendering mode changes
         switch (render_mode_) {
             case RenderMode::ForwardRendering:
-                renderer_->setDeferredRendering(false);
                 std::cout << "Switched to Forward Rendering mode\n";
+                if (!renderer_->loadForwardShaders(vertex_shader_path_, fragment_shader_path_)) {
+                    std::cerr << "Failed to load forward shaders\n";
+                }
                 break;
                 
             case RenderMode::DeferredRendering:
-                renderer_->setDeferredRendering(true);
                 std::cout << "Switched to Deferred Rendering mode\n";
+                if (!renderer_->loadDeferredShaders(
+                    geom_vert_shader_path_, geom_frag_shader_path_,
+                    light_vert_shader_path_, light_frag_shader_path_)) {
+                    std::cerr << "Failed to load deferred shaders\n";
+                }
                 break;
                 
             case RenderMode::Shadertoy:
-                renderer_->setDeferredRendering(false);
                 std::cout << "Switched to Shadertoy mode\n";
                 break;
                 
@@ -764,13 +750,6 @@ void App::RenderViewportPanel()
         
         // Display the framebuffer texture
         GLuint texture_id = renderer_->get_framebuffer_texture();
-        
-        // Debug output (once per run)
-        static bool first_debug = true;
-        if (first_debug) {
-            std::cout << "[Viewport] Displaying texture ID: " << texture_id << "\n";
-            first_debug = false;
-        }
         
         ImGui::Image((void*)(intptr_t)texture_id, viewport_size, ImVec2(0, 1), ImVec2(1, 0));
     }

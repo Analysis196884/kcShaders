@@ -189,7 +189,6 @@ void ForwardPipeline::resize(int width, int height)
 {
     width_ = width;
     height_ = height;
-    std::cout << "[ForwardPipeline] Resized to " << width << "x" << height << "\n";
 }
 
 void ForwardPipeline::cleanup()

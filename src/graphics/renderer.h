@@ -28,17 +28,14 @@ class Renderer {
     // Framebuffer methods
     void resize_framebuffer(int width, int height);
     void render_shadertoy();
-    void render_scene(kcShaders::Scene* scene, kcShaders::Camera* camera);
+    void render_forward(kcShaders::Scene* scene, kcShaders::Camera* camera);
+    void render_deferred(kcShaders::Scene* scene, kcShaders::Camera* camera);
     GLuint get_framebuffer_texture() const { return fbo_texture_; }
     int get_fb_width() const { return fb_width_; }
     int get_fb_height() const { return fb_height_; }
     
     // Screenshot
     bool take_screenshot(const std::string& filename);
-    
-    // Rendering mode control
-    void setDeferredRendering(bool enabled);
-    bool isDeferredRendering() const { return use_deferred_; }
 
     // Unified shader loading interface
     bool loadForwardShaders(const std::string& vertex_path, const std::string& fragment_path);
@@ -74,9 +71,6 @@ class Renderer {
     GLuint rbo_;
     int fb_width_;
     int fb_height_;
-    
-    // Rendering mode
-    bool use_deferred_;
     
     // Deferred rendering resources
     GBuffer* gbuffer_;
