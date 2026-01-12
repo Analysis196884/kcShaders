@@ -11,9 +11,9 @@ namespace kcShaders {
 class Scene;
 class Camera;
 class GBuffer;
-class ShaderProgram;
-class GBufferPass;
-class LightingPass;
+class RenderPipeline;
+class ForwardPipeline;
+class DeferredPipeline;
 
 class Renderer {
   public:
@@ -37,7 +37,7 @@ class Renderer {
     bool take_screenshot(const std::string& filename);
     
     // Rendering mode control
-    void setDeferredRendering(bool enabled) { use_deferred_ = enabled; }
+    void setDeferredRendering(bool enabled);
     bool isDeferredRendering() const { return use_deferred_; }
 
     // Unified shader loading interface
@@ -48,17 +48,12 @@ class Renderer {
         const std::string& light_vert = "../../src/shaders/deferred_lighting.vert",
         const std::string& light_frag = "../../src/shaders/deferred_lighting.frag"
     );
-    
-    // Shader utility methods
-    std::string load_shader_source(const std::string& shaderpath);
-    static GLuint compile_shader(GLenum type, const char* src);
-    static GLuint link_program(GLuint vs, GLuint fs);
 
   private:
     void create_framebuffer();
     void delete_framebuffer();
     
-    // Deferred rendering methods
+    // Pipeline setup
     void setupFullscreenQuad();
     void cleanupFullscreenQuad();
 
@@ -66,7 +61,7 @@ class Renderer {
     int width_;
     int height_;    
     GLFWwindow* window_;
-    Camera* camera_;  // Current camera for deferred rendering
+    Camera* camera_;
 
     // OpenGL resources
     GLuint vao_;
@@ -83,23 +78,17 @@ class Renderer {
     // Rendering mode
     bool use_deferred_;
     
-    // Forward rendering shader
-    GLuint forward_shader_;
-    
     // Deferred rendering resources
     GBuffer* gbuffer_;
     
-    // ShaderProgram wrappers
-    std::unique_ptr<ShaderProgram> geometryShaderProgram_;
-    std::unique_ptr<ShaderProgram> lightingShaderProgram_;
+    // Rendering pipelines
+    std::unique_ptr<ForwardPipeline> forwardPipeline_;
+    std::unique_ptr<DeferredPipeline> deferredPipeline_;
+    RenderPipeline* activePipeline_;  // Non-owning pointer to active pipeline
     
-    // Render passes
-    std::unique_ptr<GBufferPass> gbufferPass_;
-    std::unique_ptr<LightingPass> lightingPass_;
-    
-    // Fullscreen quad for lighting pass
+    // Fullscreen quad for deferred rendering
     GLuint quad_vao_;
     GLuint quad_vbo_;
 };
 
-} // namespace graphics
+} // namespace kcShaders

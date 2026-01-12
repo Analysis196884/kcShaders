@@ -5,11 +5,10 @@
 #include "scene/material.h"
 #include "scene/light.h"
 #include "gbuffer.h"
-#include "ShaderProgram.h"
-#include "MaterialBinder.h"
 #include "RenderContext.h"
-#include "passes/GBufferPass.h"
-#include "passes/LightingPass.h"
+#include "pipeline/RenderPipeline.h"
+#include "pipeline/ForwardPipeline.h"
+#include "pipeline/DeferredPipeline.h"
 
 #include <fstream>
 #include <sstream>
@@ -32,7 +31,6 @@ Renderer::Renderer(GLFWwindow* window, int width, int height)
     , width_(width)
     , height_(height)
     , camera_(nullptr)
-    , forward_shader_(0)
     , vao_(0)
     , vbo_(0)
     , fbo_(0)
@@ -43,6 +41,7 @@ Renderer::Renderer(GLFWwindow* window, int width, int height)
     , vertex_count_(0)
     , use_deferred_(true)  // Enable deferred rendering by default
     , gbuffer_(nullptr)
+    , activePipeline_(nullptr)
     , quad_vao_(0)
     , quad_vbo_(0)
 {
@@ -92,15 +91,45 @@ bool Renderer::initialize()
             use_deferred_ = false;
         } else {
             setupFullscreenQuad();
-            // Load deferred rendering shaders
-            if (!loadDeferredShaders()) {
-                std::cerr << "Failed to load deferred shaders, falling back to forward rendering\n";
+            
+            // Create deferred pipeline
+            deferredPipeline_ = std::make_unique<DeferredPipeline>(
+                gbuffer_, fbo_, quad_vao_, fb_width_, fb_height_
+            );
+            if (!deferredPipeline_->initialize()) {
+                std::cerr << "Failed to initialize deferred pipeline\n";
+                deferredPipeline_.reset();
                 delete gbuffer_;
                 gbuffer_ = nullptr;
                 cleanupFullscreenQuad();
                 use_deferred_ = false;
+            } else {
+                // Load deferred rendering shaders
+                if (!loadDeferredShaders()) {
+                    std::cerr << "Failed to load deferred shaders, falling back to forward rendering\n";
+                    deferredPipeline_.reset();
+                    delete gbuffer_;
+                    gbuffer_ = nullptr;
+                    cleanupFullscreenQuad();
+                    use_deferred_ = false;
+                } else {
+                    activePipeline_ = deferredPipeline_.get();
+                }
             }
         }
+    }
+    
+    // Create forward pipeline (always available as fallback)
+    forwardPipeline_ = std::make_unique<ForwardPipeline>(fbo_, fb_width_, fb_height_);
+    if (!forwardPipeline_->initialize()) {
+        std::cerr << "Failed to initialize forward pipeline\n";
+        return false;
+    }
+    
+    // If deferred pipeline failed, use forward as active
+    if (!activePipeline_) {
+        activePipeline_ = forwardPipeline_.get();
+        use_deferred_ = false;
     }
 
     return true;
@@ -109,6 +138,11 @@ bool Renderer::initialize()
 void Renderer::shutdown()
 {
     delete_framebuffer();
+    
+    // Clean up pipelines
+    activePipeline_ = nullptr;
+    forwardPipeline_.reset();
+    deferredPipeline_.reset();
     
     // Clean up deferred rendering resources
     if (gbuffer_) {
@@ -128,11 +162,6 @@ void Renderer::shutdown()
         glDeleteVertexArrays(1, &vao_);
         vao_ = 0;
     }
-    if (forward_shader_ > 0) 
-    {
-        glDeleteProgram(forward_shader_);
-        forward_shader_ = 0;
-    }
 }
 
 void Renderer::clear(float r, float g, float b, float a)
@@ -143,6 +172,10 @@ void Renderer::clear(float r, float g, float b, float a)
 
 void Renderer::render_shadertoy()
 {
+    // TODO: Implement shadertoy rendering through pipeline system
+    // This function needs to be refactored to use a dedicated ShaderToy pipeline
+    
+    /*
     // Bind framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
     glViewport(0, 0, fb_width_, fb_height_);
@@ -151,36 +184,11 @@ void Renderer::render_shadertoy()
     glClearColor(0.1f, 0.1f, 0.12f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     
-    // Render scene
-    if (forward_shader_ > 0 && vao_ > 0) 
+    // Render scene with shadertoy uniforms
+    if (vao_ > 0) 
     {
-        glUseProgram(forward_shader_);
-        // Provide shadertoy-like uniforms 
-        // iResolution (vec3)
-        GLint locRes = glGetUniformLocation(forward_shader_, "iResolution");
-        if (locRes >= 0) {
-            glUniform3f(static_cast<GLint>(locRes), (float)fb_width_, (float)fb_height_, 1.0f);
-        }
-
-        // iTime (float)
-        GLint locTime = glGetUniformLocation(forward_shader_, "iTime");
-        if (locTime >= 0) 
-        {
-            float t = static_cast<float>(glfwGetTime());
-            glUniform1f(locTime, t);
-        }
-
-        // iMouse (vec4) - x,y,current click x,y (simple mapping: z/w = 0)
-        GLint locMouse = glGetUniformLocation(forward_shader_, "iMouse");
-        if (locMouse >= 0) 
-        {
-            double mx, my;
-            glfwGetCursorPos(window_, &mx, &my);
-            // Convert to pixels and invert Y to match shadertoy's origin (bottom-left)
-            float mouse_x = static_cast<float>(mx);
-            float mouse_y = static_cast<float>(fb_height_) - static_cast<float>(my);
-            glUniform4f(locMouse, mouse_x, mouse_y, 0.0f, 0.0f);
-        }
+        // Use appropriate shader and set uniforms
+        // iResolution, iTime, iMouse, etc.
         glBindVertexArray(vao_);
         glDrawArrays(GL_TRIANGLES, 0, vertex_count_);
         glBindVertexArray(0);
@@ -188,6 +196,7 @@ void Renderer::render_shadertoy()
     
     // Unbind framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    */
 }
 
 void Renderer::render_scene(Scene* scene, Camera* camera)
@@ -198,442 +207,32 @@ void Renderer::render_scene(Scene* scene, Camera* camera)
     
     camera_ = camera;
     
-    // Use deferred rendering if enabled and G-Buffer is available
-    if (use_deferred_ && gbuffer_ && gbufferPass_ && lightingPass_) {
+    // Use active pipeline
+    if (activePipeline_) {
         RenderContext ctx;
         ctx.scene = scene;
         ctx.camera = camera;
         ctx.viewportWidth = fb_width_;
         ctx.viewportHeight = fb_height_;
         ctx.gbuffer = gbuffer_;
-        ctx.deltaTime = 0.0f;  // Can be set from main loop if needed
-        ctx.totalTime = 0.0f;  // Can be set from main loop if needed
+        ctx.deltaTime = 0.0f;
+        ctx.totalTime = 0.0f;
         
-        gbufferPass_->execute(ctx);
-        lightingPass_->execute(ctx);
+        activePipeline_->execute(ctx);
         return;
     }
     
-    // Fallback to forward rendering
-    if (forward_shader_ == 0) {
-        return;
-    }
-
-    // Bind framebuffer
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
-    glViewport(0, 0, fb_width_, fb_height_);
-    
-    // Clear framebuffer
-    glClearColor(0.1f, 0.1f, 0.12f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    
-    // Use the shader program
-    glUseProgram(forward_shader_);
-    
-    // Get view and projection matrices from camera
-    glm::mat4 view = camera->GetViewMatrix();
-    glm::mat4 proj = camera->GetProjectionMatrix();
-    
-    // Set view and projection uniforms 
-    GLint locView = glGetUniformLocation(forward_shader_, "uView");
-    GLint locProj = glGetUniformLocation(forward_shader_, "uProjection");
-    
-    if (locView >= 0) {
-        glUniformMatrix4fv(locView, 1, GL_FALSE, &view[0][0]);
-    }
-    
-    if (locProj >= 0) {
-        glUniformMatrix4fv(locProj, 1, GL_FALSE, &proj[0][0]);
-    }
-    
-    // Set camera position for lighting calculations
-    GLint locViewPos = glGetUniformLocation(forward_shader_, "viewPos");
-    if (locViewPos >= 0) {
-        glm::vec3 camPos = camera->GetPosition();
-        glUniform3fv(locViewPos, 1, &camPos[0]);
-    }
-    
-    // Set up lighting uniforms
-    int numDirLights = 0;
-    int numPointLights = 0;
-    int numSpotLights = 0;
-    glm::vec3 ambientLight(0.0f);
-    
-    // Process all lights in the scene
-    for (size_t i = 0; i < scene->lights.size(); ++i) {
-        Light* light = scene->lights[i];
-        if (!light || !light->enabled) continue;
-        
-        switch (light->GetType()) {
-            case LightType::Directional: {
-                if (numDirLights >= 4) break; // MAX_DIR_LIGHTS = 4
-                DirectionalLight* dirLight = static_cast<DirectionalLight*>(light);
-                
-                std::string baseName = "dirLights[" + std::to_string(numDirLights) + "]";
-                GLint loc;
-                
-                loc = glGetUniformLocation(forward_shader_, (baseName + ".direction").c_str());
-                if (loc >= 0) glUniform3fv(loc, 1, &dirLight->direction[0]);
-                
-                loc = glGetUniformLocation(forward_shader_, (baseName + ".color").c_str());
-                if (loc >= 0) glUniform3fv(loc, 1, &dirLight->color[0]);
-                
-                loc = glGetUniformLocation(forward_shader_, (baseName + ".intensity").c_str());
-                if (loc >= 0) glUniform1f(loc, dirLight->intensity);
-                
-                numDirLights++;
-                break;
-            }
-            
-            case LightType::Point: {
-                if (numPointLights >= 8) break; // MAX_POINT_LIGHTS = 8
-                PointLight* pointLight = static_cast<PointLight*>(light);
-                
-                std::string baseName = "pointLights[" + std::to_string(numPointLights) + "]";
-                GLint loc;
-                
-                loc = glGetUniformLocation(forward_shader_, (baseName + ".position").c_str());
-                if (loc >= 0) glUniform3fv(loc, 1, &pointLight->position[0]);
-                
-                loc = glGetUniformLocation(forward_shader_, (baseName + ".color").c_str());
-                if (loc >= 0) glUniform3fv(loc, 1, &pointLight->color[0]);
-                
-                loc = glGetUniformLocation(forward_shader_, (baseName + ".intensity").c_str());
-                if (loc >= 0) glUniform1f(loc, pointLight->intensity);
-                
-                loc = glGetUniformLocation(forward_shader_, (baseName + ".constant").c_str());
-                if (loc >= 0) glUniform1f(loc, pointLight->constant);
-                
-                loc = glGetUniformLocation(forward_shader_, (baseName + ".linear").c_str());
-                if (loc >= 0) glUniform1f(loc, pointLight->linear);
-                
-                loc = glGetUniformLocation(forward_shader_, (baseName + ".quadratic").c_str());
-                if (loc >= 0) glUniform1f(loc, pointLight->quadratic);
-                
-                loc = glGetUniformLocation(forward_shader_, (baseName + ".radius").c_str());
-                if (loc >= 0) glUniform1f(loc, pointLight->radius);
-                
-                numPointLights++;
-                break;
-            }
-            
-            case LightType::Spot: {
-                if (numSpotLights >= 4) break; // MAX_SPOT_LIGHTS = 4
-                SpotLight* spotLight = static_cast<SpotLight*>(light);
-                
-                std::string baseName = "spotLights[" + std::to_string(numSpotLights) + "]";
-                GLint loc;
-                
-                loc = glGetUniformLocation(forward_shader_, (baseName + ".position").c_str());
-                if (loc >= 0) glUniform3fv(loc, 1, &spotLight->position[0]);
-                
-                loc = glGetUniformLocation(forward_shader_, (baseName + ".direction").c_str());
-                if (loc >= 0) glUniform3fv(loc, 1, &spotLight->direction[0]);
-                
-                loc = glGetUniformLocation(forward_shader_, (baseName + ".color").c_str());
-                if (loc >= 0) glUniform3fv(loc, 1, &spotLight->color[0]);
-                
-                loc = glGetUniformLocation(forward_shader_, (baseName + ".intensity").c_str());
-                if (loc >= 0) glUniform1f(loc, spotLight->intensity);
-                
-                loc = glGetUniformLocation(forward_shader_, (baseName + ".innerConeAngle").c_str());
-                if (loc >= 0) glUniform1f(loc, spotLight->innerConeAngle);
-                
-                loc = glGetUniformLocation(forward_shader_, (baseName + ".outerConeAngle").c_str());
-                if (loc >= 0) glUniform1f(loc, spotLight->outerConeAngle);
-                
-                loc = glGetUniformLocation(forward_shader_, (baseName + ".constant").c_str());
-                if (loc >= 0) glUniform1f(loc, spotLight->constant);
-                
-                loc = glGetUniformLocation(forward_shader_, (baseName + ".linear").c_str());
-                if (loc >= 0) glUniform1f(loc, spotLight->linear);
-                
-                loc = glGetUniformLocation(forward_shader_, (baseName + ".quadratic").c_str());
-                if (loc >= 0) glUniform1f(loc, spotLight->quadratic);
-                
-                numSpotLights++;
-                break;
-            }
-            
-            case LightType::Ambient: {
-                AmbientLight* ambLight = static_cast<AmbientLight*>(light);
-                ambientLight += ambLight->color * ambLight->intensity;
-                break;
-            }
-            
-            default:
-                break;
-        }
-    }
-    
-    // Set light counts
-    GLint locNumDirLights = glGetUniformLocation(forward_shader_, "numDirLights");
-    if (locNumDirLights >= 0) glUniform1i(locNumDirLights, numDirLights);
-    
-    GLint locNumPointLights = glGetUniformLocation(forward_shader_, "numPointLights");
-    if (locNumPointLights >= 0) glUniform1i(locNumPointLights, numPointLights);
-    
-    GLint locNumSpotLights = glGetUniformLocation(forward_shader_, "numSpotLights");
-    if (locNumSpotLights >= 0) glUniform1i(locNumSpotLights, numSpotLights);
-    
-    // Set ambient light
-    GLint locAmbientLight = glGetUniformLocation(forward_shader_, "ambientLight");
-    if (locAmbientLight >= 0) glUniform3fv(locAmbientLight, 1, &ambientLight[0]);
-    
-    // Collect all render items from the scene
-    std::vector<RenderItem> items;
-    scene->collectRenderItems(items);
-    
-    // Render each item
-    for (const auto& item : items) {
-        if (item.mesh && item.mesh->isUploaded()) {
-            // Set model matrix uniform
-            GLint locModel = glGetUniformLocation(forward_shader_, "uModel");
-            if (locModel >= 0) {
-                glUniformMatrix4fv(locModel, 1, GL_FALSE, &item.modelMatrix[0][0]);
-            }
-            
-            // Set material properties
-            if (item.material) {
-                // Albedo/Base Color
-                GLint locAlbedo = glGetUniformLocation(forward_shader_, "material.albedo");
-                if (locAlbedo >= 0) {
-                    glUniform3fv(locAlbedo, 1, &item.material->albedo[0]);
-                }
-                
-                // PBR properties
-                GLint locMetallic = glGetUniformLocation(forward_shader_, "material.metallic");
-                if (locMetallic >= 0) {
-                    glUniform1f(locMetallic, item.material->metallic);
-                }
-                
-                GLint locRoughness = glGetUniformLocation(forward_shader_, "material.roughness");
-                if (locRoughness >= 0) {
-                    glUniform1f(locRoughness, item.material->roughness);
-                }
-                
-                GLint locAO = glGetUniformLocation(forward_shader_, "material.ao");
-                if (locAO >= 0) {
-                    glUniform1f(locAO, item.material->ao);
-                }
-                
-                // Emissive
-                GLint locEmissive = glGetUniformLocation(forward_shader_, "material.emissive");
-                if (locEmissive >= 0) {
-                    glUniform3fv(locEmissive, 1, &item.material->emissive[0]);
-                }
-                
-                GLint locEmissiveStrength = glGetUniformLocation(forward_shader_, "material.emissiveStrength");
-                if (locEmissiveStrength >= 0) {
-                    glUniform1f(locEmissiveStrength, item.material->emissiveStrength);
-                }
-                
-                // Opacity
-                GLint locOpacity = glGetUniformLocation(forward_shader_, "material.opacity");
-                if (locOpacity >= 0) {
-                    glUniform1f(locOpacity, item.material->opacity);
-                }
-                
-                // Set texture samplers (bind textures to texture units)
-                // Texture unit 0: Albedo map
-                GLint locAlbedoMap = glGetUniformLocation(forward_shader_, "albedoMap");
-                GLint locHasAlbedoMap = glGetUniformLocation(forward_shader_, "hasAlbedoMap");
-                if (locAlbedoMap >= 0) {
-                    glActiveTexture(GL_TEXTURE0);
-                    glBindTexture(GL_TEXTURE_2D, item.material->albedoMap);
-                    glUniform1i(locAlbedoMap, 0);
-                }
-                if (locHasAlbedoMap >= 0) {
-                    glUniform1i(locHasAlbedoMap, item.material->albedoMap != 0 ? 1 : 0);
-                }
-                
-                // Texture unit 1: Metallic map
-                GLint locMetallicMap = glGetUniformLocation(forward_shader_, "metallicMap");
-                GLint locHasMetallicMap = glGetUniformLocation(forward_shader_, "hasMetallicMap");
-                if (locMetallicMap >= 0) {
-                    glActiveTexture(GL_TEXTURE1);
-                    glBindTexture(GL_TEXTURE_2D, item.material->metallicMap);
-                    glUniform1i(locMetallicMap, 1);
-                }
-                if (locHasMetallicMap >= 0) {
-                    glUniform1i(locHasMetallicMap, item.material->metallicMap != 0 ? 1 : 0);
-                }
-                
-                // Texture unit 2: Roughness map
-                GLint locRoughnessMap = glGetUniformLocation(forward_shader_, "roughnessMap");
-                GLint locHasRoughnessMap = glGetUniformLocation(forward_shader_, "hasRoughnessMap");
-                if (locRoughnessMap >= 0) {
-                    glActiveTexture(GL_TEXTURE2);
-                    glBindTexture(GL_TEXTURE_2D, item.material->roughnessMap);
-                    glUniform1i(locRoughnessMap, 2);
-                }
-                if (locHasRoughnessMap >= 0) {
-                    glUniform1i(locHasRoughnessMap, item.material->roughnessMap != 0 ? 1 : 0);
-                }
-                
-                // Texture unit 3: Normal map
-                GLint locNormalMap = glGetUniformLocation(forward_shader_, "normalMap");
-                GLint locHasNormalMap = glGetUniformLocation(forward_shader_, "hasNormalMap");
-                if (locNormalMap >= 0) {
-                    glActiveTexture(GL_TEXTURE3);
-                    glBindTexture(GL_TEXTURE_2D, item.material->normalMap);
-                    glUniform1i(locNormalMap, 3);
-                }
-                if (locHasNormalMap >= 0) {
-                    glUniform1i(locHasNormalMap, item.material->normalMap != 0 ? 1 : 0);
-                }
-                
-                // Texture unit 4: AO map
-                GLint locAOMap = glGetUniformLocation(forward_shader_, "aoMap");
-                GLint locHasAOMap = glGetUniformLocation(forward_shader_, "hasAOMap");
-                if (locAOMap >= 0) {
-                    glActiveTexture(GL_TEXTURE4);
-                    glBindTexture(GL_TEXTURE_2D, item.material->aoMap);
-                    glUniform1i(locAOMap, 4);
-                }
-                if (locHasAOMap >= 0) {
-                    glUniform1i(locHasAOMap, item.material->aoMap != 0 ? 1 : 0);
-                }
-                
-                // Texture unit 5: Emissive map
-                GLint locEmissiveMap = glGetUniformLocation(forward_shader_, "emissiveMap");
-                GLint locHasEmissiveMap = glGetUniformLocation(forward_shader_, "hasEmissiveMap");
-                if (locEmissiveMap >= 0) {
-                    glActiveTexture(GL_TEXTURE5);
-                    glBindTexture(GL_TEXTURE_2D, item.material->emissiveMap);
-                    glUniform1i(locEmissiveMap, 5);
-                }
-                if (locHasEmissiveMap >= 0) {
-                    glUniform1i(locHasEmissiveMap, item.material->emissiveMap != 0 ? 1 : 0);
-                }
-                
-                // Reset active texture unit
-                glActiveTexture(GL_TEXTURE0);
-            } else {
-                // Use default material values if no material is assigned
-                GLint locAlbedo = glGetUniformLocation(forward_shader_, "material.albedo");
-                if (locAlbedo >= 0) {
-                    glUniform3f(locAlbedo, 0.8f, 0.8f, 0.8f);
-                }
-                
-                GLint locMetallic = glGetUniformLocation(forward_shader_, "material.metallic");
-                if (locMetallic >= 0) {
-                    glUniform1f(locMetallic, 0.0f);
-                }
-                
-                GLint locRoughness = glGetUniformLocation(forward_shader_, "material.roughness");
-                if (locRoughness >= 0) {
-                    glUniform1f(locRoughness, 0.5f);
-                }
-                
-                GLint locAO = glGetUniformLocation(forward_shader_, "material.ao");
-                if (locAO >= 0) {
-                    glUniform1f(locAO, 1.0f);
-                }
-            }
-            
-            // Draw the mesh
-            item.mesh->draw();
-        }
-    }
-    
-    // Unbind framebuffer
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    std::cerr << "[Renderer] No active pipeline available\n";
 }
 
 bool Renderer::loadForwardShaders(const std::string& vertex_path, const std::string& fragment_path)
 {
-    std::string vertex_code;
-    std::string fragment_code;
-
-    // Load fragment shader if provided
-    if (!fragment_path.empty()) {
-        fragment_code = load_shader_source(fragment_path);
-        if (fragment_code.empty()) {
-            std::cerr << "Failed to load fragment shader source file: " << fragment_path << "\n";
-            return false;
-        }
-    } else {
-        std::cerr << "No fragment shader provided\n";
+    if (!forwardPipeline_) {
+        std::cerr << "[Renderer] Forward pipeline not initialized\n";
         return false;
     }
-
-    // Load vertex shader
-    if (!vertex_path.empty()) {
-        vertex_code = load_shader_source(vertex_path);
-        if (vertex_code.empty()) {
-            std::cerr << "Failed to load vertex shader source file: " << vertex_path << "\n";
-            return false;
-        }
-    } else {
-        // ...
-    }
-
-    GLuint vertex_shader = compile_shader(GL_VERTEX_SHADER, vertex_code.c_str());
-    GLuint fragment_shader = compile_shader(GL_FRAGMENT_SHADER, fragment_code.c_str());
-
-    if (vertex_shader == 0 || fragment_shader == 0) {
-        return false;
-    }
-
-    forward_shader_ = link_program(vertex_shader, fragment_shader);
-
-    glDeleteShader(vertex_shader);
-    glDeleteShader(fragment_shader);
-
-    if (forward_shader_ == 0) {
-        return false;
-    }
-
-    return true;
-}
-
-std::string Renderer::load_shader_source(const std::string& shaderpath)
-{
-    std::ifstream file(shaderpath, std::ios::in | std::ios::binary);
-    if (!file)
-        return std::string();
-
-    std::ostringstream ss;
-    ss << file.rdbuf();
-    return ss.str();
-}
-
-GLuint Renderer::compile_shader(GLenum type, const char* src)
-{
-    GLuint shader = glCreateShader(type);
-    glShaderSource(shader, 1, &src, nullptr);
-    glCompileShader(shader);
-
-    GLint success;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        char infoLog[512];
-        glGetShaderInfoLog(shader, 512, nullptr, infoLog);
-        std::cerr << "ERROR::SHADER::COMPILATION_FAILED\n" << infoLog << std::endl;
-        glDeleteShader(shader);
-        return 0;
-    }
-    return shader;
-}
-
-GLuint Renderer::link_program(GLuint vs, GLuint fs)
-{
-    GLuint program = glCreateProgram();
-    glAttachShader(program, vs);
-    glAttachShader(program, fs);
-    glLinkProgram(program);
-
-    GLint success;
-    glGetProgramiv(program, GL_LINK_STATUS, &success);
-    if (!success) {
-        char infoLog[512];
-        glGetProgramInfoLog(program, 512, nullptr, infoLog);
-        std::cerr << "ERROR::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
-        glDeleteProgram(program);
-        return 0;
-    }
-    return program;
+    
+    return forwardPipeline_->loadShaders(vertex_path, fragment_path);
 }
 
 void Renderer::create_framebuffer()
@@ -692,17 +291,17 @@ void Renderer::resize_framebuffer(int width, int height)
     
     create_framebuffer();
     
-    // Also resize G-Buffer if deferred rendering is enabled
+    // Resize G-Buffer if deferred rendering is enabled
     if (gbuffer_) {
         gbuffer_->resize(width, height);
     }
     
-    // Notify passes about resize
-    if (gbufferPass_) {
-        gbufferPass_->resize(width, height);
+    // Notify pipelines about resize
+    if (forwardPipeline_) {
+        forwardPipeline_->resize(width, height);
     }
-    if (lightingPass_) {
-        lightingPass_->resize(width, height);
+    if (deferredPipeline_) {
+        deferredPipeline_->resize(width, height);
     }
 }
 
@@ -814,41 +413,31 @@ bool Renderer::loadDeferredShaders(
     const std::string& light_frag
 )
 {   
-    std::cout << "Loading deferred shaders...\n";
-    std::cout << "  Geometry vertex: " << geom_vert << "\n";
-    std::cout << "  Geometry fragment: " << geom_frag << "\n";
-    std::cout << "  Lighting vertex: " << light_vert << "\n";
-    std::cout << "  Lighting fragment: " << light_frag << "\n";
-    
-    // Create ShaderProgram wrappers
-    geometryShaderProgram_ = std::make_unique<ShaderProgram>();
-    if (!geometryShaderProgram_->loadFromFiles(geom_vert, geom_frag)) {
-        std::cerr << "Failed to create geometry ShaderProgram\n";
+    if (!deferredPipeline_) {
+        std::cerr << "[Renderer] Deferred pipeline not initialized\n";
         return false;
     }
-    std::cout << "Geometry shader loaded successfully\n";
     
-    lightingShaderProgram_ = std::make_unique<ShaderProgram>();
-    if (!lightingShaderProgram_->loadFromFiles(light_vert, light_frag)) {
-        std::cerr << "Failed to create lighting ShaderProgram\n";
-        return false;
+    return deferredPipeline_->loadShaders(geom_vert, geom_frag, light_vert, light_frag);
+}
+
+void Renderer::setDeferredRendering(bool enabled)
+{
+    if (enabled == use_deferred_) {
+        return; // Already in desired mode
     }
-    std::cout << "Lighting shader loaded successfully\n";
     
-    // Create render passes
-    gbufferPass_ = std::make_unique<GBufferPass>(gbuffer_, geometryShaderProgram_.get());
-    lightingPass_ = std::make_unique<LightingPass>(
-        gbuffer_, 
-        lightingShaderProgram_.get(),
-        fbo_,
-        quad_vao_,
-        fb_width_,
-        fb_height_
-    );
-    
-    std::cout << "Deferred shaders loaded successfully!\n";
-    
-    return true;
+    if (enabled && deferredPipeline_) {
+        activePipeline_ = deferredPipeline_.get();
+        use_deferred_ = true;
+        std::cout << "[Renderer] Switched to deferred rendering\n";
+    } else if (!enabled && forwardPipeline_) {
+        activePipeline_ = forwardPipeline_.get();
+        use_deferred_ = false;
+        std::cout << "[Renderer] Switched to forward rendering\n";
+    } else {
+        std::cerr << "[Renderer] Cannot switch rendering mode - pipeline not available\n";
+    }
 }
 
 } // namespace kcShaders
