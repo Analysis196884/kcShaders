@@ -5,6 +5,11 @@
 #include "scene/material.h"
 #include "scene/light.h"
 #include "gbuffer.h"
+#include "ShaderProgram.h"
+#include "MaterialBinder.h"
+#include "RenderContext.h"
+#include "passes/GBufferPass.h"
+#include "passes/LightingPass.h"
 
 #include <fstream>
 #include <sstream>
@@ -38,8 +43,6 @@ Renderer::Renderer(GLFWwindow* window, int width, int height)
     , vertex_count_(0)
     , use_deferred_(true)  // Enable deferred rendering by default
     , gbuffer_(nullptr)
-    , geometry_shader_(0)
-    , lighting_shader_(0)
     , quad_vao_(0)
     , quad_vbo_(0)
 {
@@ -111,16 +114,6 @@ void Renderer::shutdown()
     if (gbuffer_) {
         delete gbuffer_;
         gbuffer_ = nullptr;
-    }
-    
-    if (geometry_shader_ > 0) {
-        glDeleteProgram(geometry_shader_);
-        geometry_shader_ = 0;
-    }
-    
-    if (lighting_shader_ > 0) {
-        glDeleteProgram(lighting_shader_);
-        lighting_shader_ = 0;
     }
     
     cleanupFullscreenQuad();
@@ -206,9 +199,18 @@ void Renderer::render_scene(Scene* scene, Camera* camera)
     camera_ = camera;
     
     // Use deferred rendering if enabled and G-Buffer is available
-    if (use_deferred_ && gbuffer_ && geometry_shader_ > 0 && lighting_shader_ > 0) {
-        renderGeometryPass(scene, camera);
-        renderLightingPass(scene, camera);
+    if (use_deferred_ && gbuffer_ && gbufferPass_ && lightingPass_) {
+        RenderContext ctx;
+        ctx.scene = scene;
+        ctx.camera = camera;
+        ctx.viewportWidth = fb_width_;
+        ctx.viewportHeight = fb_height_;
+        ctx.gbuffer = gbuffer_;
+        ctx.deltaTime = 0.0f;  // Can be set from main loop if needed
+        ctx.totalTime = 0.0f;  // Can be set from main loop if needed
+        
+        gbufferPass_->execute(ctx);
+        lightingPass_->execute(ctx);
         return;
     }
     
@@ -694,6 +696,14 @@ void Renderer::resize_framebuffer(int width, int height)
     if (gbuffer_) {
         gbuffer_->resize(width, height);
     }
+    
+    // Notify passes about resize
+    if (gbufferPass_) {
+        gbufferPass_->resize(width, height);
+    }
+    if (lightingPass_) {
+        lightingPass_->resize(width, height);
+    }
 }
 
 bool Renderer::take_screenshot(const std::string& filename)
@@ -810,520 +820,35 @@ bool Renderer::loadDeferredShaders(
     std::cout << "  Lighting vertex: " << light_vert << "\n";
     std::cout << "  Lighting fragment: " << light_frag << "\n";
     
-    // Load geometry pass shader
-    std::string geom_vert_code = load_shader_source(geom_vert);
-    std::string geom_frag_code = load_shader_source(geom_frag);
-    
-    if (geom_vert_code.empty() || geom_frag_code.empty()) {
-        std::cerr << "ERROR: Failed to load deferred geometry shaders\n";
-        std::cerr << "  Vertex shader empty: " << geom_vert_code.empty() << "\n";
-        std::cerr << "  Fragment shader empty: " << geom_frag_code.empty() << "\n";
+    // Create ShaderProgram wrappers
+    geometryShaderProgram_ = std::make_unique<ShaderProgram>();
+    if (!geometryShaderProgram_->loadFromFiles(geom_vert, geom_frag)) {
+        std::cerr << "Failed to create geometry ShaderProgram\n";
         return false;
     }
+    std::cout << "Geometry shader loaded successfully\n";
     
-    GLuint geom_vert_shader = compile_shader(GL_VERTEX_SHADER, geom_vert_code.c_str());
-    GLuint geom_frag_shader = compile_shader(GL_FRAGMENT_SHADER, geom_frag_code.c_str());
-    
-    if (geom_vert_shader == 0 || geom_frag_shader == 0) {
-        std::cerr << "Failed to compile deferred geometry shaders\n";
+    lightingShaderProgram_ = std::make_unique<ShaderProgram>();
+    if (!lightingShaderProgram_->loadFromFiles(light_vert, light_frag)) {
+        std::cerr << "Failed to create lighting ShaderProgram\n";
         return false;
     }
+    std::cout << "Lighting shader loaded successfully\n";
     
-    geometry_shader_ = glCreateProgram();
-    glAttachShader(geometry_shader_, geom_vert_shader);
-    glAttachShader(geometry_shader_, geom_frag_shader);
-    glLinkProgram(geometry_shader_);
+    // Create render passes
+    gbufferPass_ = std::make_unique<GBufferPass>(gbuffer_, geometryShaderProgram_.get());
+    lightingPass_ = std::make_unique<LightingPass>(
+        gbuffer_, 
+        lightingShaderProgram_.get(),
+        fbo_,
+        quad_vao_,
+        fb_width_,
+        fb_height_
+    );
     
-    GLint success;
-    glGetProgramiv(geometry_shader_, GL_LINK_STATUS, &success);
-    if (!success) {
-        char infoLog[512];
-        glGetProgramInfoLog(geometry_shader_, 512, nullptr, infoLog);
-        std::cerr << "Geometry shader linking failed:\n" << infoLog << "\n";
-        glDeleteShader(geom_vert_shader);
-        glDeleteShader(geom_frag_shader);
-        return false;
-    }
-    
-    glDeleteShader(geom_vert_shader);
-    glDeleteShader(geom_frag_shader);
-    std::cout << "Geometry shader linked successfully\n";
-    
-    // Load lighting pass shader
-    std::string light_vert_code = load_shader_source(light_vert);
-    std::string light_frag_code = load_shader_source(light_frag);
-    
-    if (light_vert_code.empty() || light_frag_code.empty()) {
-        std::cerr << "Failed to load deferred lighting shaders\n";
-        return false;
-    }
-    
-    GLuint light_vert_shader = compile_shader(GL_VERTEX_SHADER, light_vert_code.c_str());
-    GLuint light_frag_shader = compile_shader(GL_FRAGMENT_SHADER, light_frag_code.c_str());
-    
-    if (light_vert_shader == 0 || light_frag_shader == 0) {
-        std::cerr << "Failed to compile deferred lighting shaders\n";
-        return false;
-    }
-    
-    lighting_shader_ = glCreateProgram();
-    glAttachShader(lighting_shader_, light_vert_shader);
-    glAttachShader(lighting_shader_, light_frag_shader);
-    glLinkProgram(lighting_shader_);
-    
-    glGetProgramiv(lighting_shader_, GL_LINK_STATUS, &success);
-    if (!success) {
-        char infoLog[512];
-        glGetProgramInfoLog(lighting_shader_, 512, nullptr, infoLog);
-        std::cerr << "Lighting shader linking failed:\n" << infoLog << "\n";
-        glDeleteShader(light_vert_shader);
-        glDeleteShader(light_frag_shader);
-        return false;
-    }
-    
-    glDeleteShader(light_vert_shader);
-    glDeleteShader(light_frag_shader);
-    std::cout << "Lighting shader linked successfully\n";
     std::cout << "Deferred shaders loaded successfully!\n";
     
     return true;
-}
-
-void Renderer::renderGeometryPass(Scene* scene, Camera* camera)
-{
-    // Bind G-Buffer
-    gbuffer_->bind();
-    
-    // Set viewport to G-Buffer size
-    glViewport(0, 0, fb_width_, fb_height_);
-    
-    // Clear all attachments
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    
-    // Enable depth test
-    glEnable(GL_DEPTH_TEST);
-    
-    // Use geometry shader
-    glUseProgram(geometry_shader_);
-    
-    // Set view and projection matrices
-    GLint locView = glGetUniformLocation(geometry_shader_, "uView");
-    GLint locProj = glGetUniformLocation(geometry_shader_, "uProjection");
-    
-    if (locView >= 0) {
-        glUniformMatrix4fv(locView, 1, GL_FALSE, &camera->GetViewMatrix()[0][0]);
-    }
-    if (locProj >= 0) {
-        glUniformMatrix4fv(locProj, 1, GL_FALSE, &camera->GetProjectionMatrix()[0][0]);
-    }
-    
-    // Collect render items
-    std::vector<RenderItem> items;
-    scene->collectRenderItems(items);
-    
-    static bool first_geom_call = true;
-    if (first_geom_call) {
-        std::cout << "[Geometry Pass] Rendering " << items.size() << " items\n";
-    }
-    
-    // Render all meshes
-    for (const auto& item : items) {
-        if (!item.mesh) continue;
-        
-        // Set model matrix
-        GLint locModel = glGetUniformLocation(geometry_shader_, "uModel");
-        if (locModel >= 0) {
-            glUniformMatrix4fv(locModel, 1, GL_FALSE, &item.modelMatrix[0][0]);
-        }
-        
-        // Set material properties
-        if (item.material) {
-            // Albedo
-            GLint locAlbedo = glGetUniformLocation(geometry_shader_, "material.albedo");
-            if (locAlbedo >= 0) {
-                glUniform3fv(locAlbedo, 1, &item.material->albedo[0]);
-            }
-            
-            // Metallic
-            GLint locMetallic = glGetUniformLocation(geometry_shader_, "material.metallic");
-            if (locMetallic >= 0) {
-                glUniform1f(locMetallic, item.material->metallic);
-            }
-            
-            // Roughness
-            GLint locRoughness = glGetUniformLocation(geometry_shader_, "material.roughness");
-            if (locRoughness >= 0) {
-                glUniform1f(locRoughness, item.material->roughness);
-            }
-            
-            // AO
-            GLint locAO = glGetUniformLocation(geometry_shader_, "material.ao");
-            if (locAO >= 0) {
-                glUniform1f(locAO, item.material->ao);
-            }
-            
-            // Emissive
-            GLint locEmissive = glGetUniformLocation(geometry_shader_, "material.emissive");
-            if (locEmissive >= 0) {
-                glUniform3fv(locEmissive, 1, &item.material->emissive[0]);
-            }
-            
-            // Bind textures (same as forward rendering)
-            GLint locAlbedoMap = glGetUniformLocation(geometry_shader_, "albedoMap");
-            GLint locHasAlbedoMap = glGetUniformLocation(geometry_shader_, "hasAlbedoMap");
-            if (locAlbedoMap >= 0) {
-                glActiveTexture(GL_TEXTURE0);
-                glBindTexture(GL_TEXTURE_2D, item.material->albedoMap);
-                glUniform1i(locAlbedoMap, 0);
-            }
-            if (locHasAlbedoMap >= 0) {
-                glUniform1i(locHasAlbedoMap, item.material->albedoMap != 0 ? 1 : 0);
-            }
-            
-            GLint locMetallicMap = glGetUniformLocation(geometry_shader_, "metallicMap");
-            GLint locHasMetallicMap = glGetUniformLocation(geometry_shader_, "hasMetallicMap");
-            if (locMetallicMap >= 0) {
-                glActiveTexture(GL_TEXTURE1);
-                glBindTexture(GL_TEXTURE_2D, item.material->metallicMap);
-                glUniform1i(locMetallicMap, 1);
-            }
-            if (locHasMetallicMap >= 0) {
-                glUniform1i(locHasMetallicMap, item.material->metallicMap != 0 ? 1 : 0);
-            }
-            
-            GLint locRoughnessMap = glGetUniformLocation(geometry_shader_, "roughnessMap");
-            GLint locHasRoughnessMap = glGetUniformLocation(geometry_shader_, "hasRoughnessMap");
-            if (locRoughnessMap >= 0) {
-                glActiveTexture(GL_TEXTURE2);
-                glBindTexture(GL_TEXTURE_2D, item.material->roughnessMap);
-                glUniform1i(locRoughnessMap, 2);
-            }
-            if (locHasRoughnessMap >= 0) {
-                glUniform1i(locHasRoughnessMap, item.material->roughnessMap != 0 ? 1 : 0);
-            }
-            
-            GLint locNormalMap = glGetUniformLocation(geometry_shader_, "normalMap");
-            GLint locHasNormalMap = glGetUniformLocation(geometry_shader_, "hasNormalMap");
-            if (locNormalMap >= 0) {
-                glActiveTexture(GL_TEXTURE3);
-                glBindTexture(GL_TEXTURE_2D, item.material->normalMap);
-                glUniform1i(locNormalMap, 3);
-            }
-            if (locHasNormalMap >= 0) {
-                glUniform1i(locHasNormalMap, item.material->normalMap != 0 ? 1 : 0);
-            }
-            
-            GLint locAOMap = glGetUniformLocation(geometry_shader_, "aoMap");
-            GLint locHasAOMap = glGetUniformLocation(geometry_shader_, "hasAOMap");
-            if (locAOMap >= 0) {
-                glActiveTexture(GL_TEXTURE4);
-                glBindTexture(GL_TEXTURE_2D, item.material->aoMap);
-                glUniform1i(locAOMap, 4);
-            }
-            if (locHasAOMap >= 0) {
-                glUniform1i(locHasAOMap, item.material->aoMap != 0 ? 1 : 0);
-            }
-            
-            GLint locEmissiveMap = glGetUniformLocation(geometry_shader_, "emissiveMap");
-            GLint locHasEmissiveMap = glGetUniformLocation(geometry_shader_, "hasEmissiveMap");
-            if (locEmissiveMap >= 0) {
-                glActiveTexture(GL_TEXTURE5);
-                glBindTexture(GL_TEXTURE_2D, item.material->emissiveMap);
-                glUniform1i(locEmissiveMap, 5);
-            }
-            if (locHasEmissiveMap >= 0) {
-                glUniform1i(locHasEmissiveMap, item.material->emissiveMap != 0 ? 1 : 0);
-            }
-            
-            glActiveTexture(GL_TEXTURE0);
-        }
-        
-        // Draw mesh
-        item.mesh->draw();
-    }
-    
-    // Check first pixel of G-Buffer for debugging
-    if (first_geom_call) {
-        glReadBuffer(GL_COLOR_ATTACHMENT0);
-        float albedo[4];
-        glReadPixels(fb_width_/2, fb_height_/2, 1, 1, GL_RGBA, GL_FLOAT, albedo);
-        std::cout << "[Geometry Pass] Center pixel albedo: (" << albedo[0] << ", " << albedo[1] << ", " << albedo[2] << ", " << albedo[3] << ")\n";
-        
-        glReadBuffer(GL_COLOR_ATTACHMENT1);
-        float normal[4];
-        glReadPixels(fb_width_/2, fb_height_/2, 1, 1, GL_RGBA, GL_FLOAT, normal);
-        std::cout << "[Geometry Pass] Center pixel normal: (" << normal[0] << ", " << normal[1] << ", " << normal[2] << ", " << normal[3] << ")\n";
-        
-        glReadBuffer(GL_COLOR_ATTACHMENT2);
-        float position[4];
-        glReadPixels(fb_width_/2, fb_height_/2, 1, 1, GL_RGBA, GL_FLOAT, position);
-        std::cout << "[Geometry Pass] Center pixel position: (" << position[0] << ", " << position[1] << ", " << position[2] << ", " << position[3] << ")\n";
-        
-        glReadBuffer(GL_COLOR_ATTACHMENT3);
-        float material[4];
-        glReadPixels(fb_width_/2, fb_height_/2, 1, 1, GL_RGBA, GL_FLOAT, material);
-        std::cout << "[Geometry Pass] Center pixel material (M/R/AO): (" << material[0] << ", " << material[1] << ", " << material[2] << ", " << material[3] << ")\n";
-        
-        first_geom_call = false;
-    }
-    
-    // Unbind G-Buffer
-    gbuffer_->unbind();
-}
-
-void Renderer::renderLightingPass(Scene* scene, Camera* camera)
-{
-    // Bind final framebuffer
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
-    
-    // Set viewport to framebuffer size
-    glViewport(0, 0, fb_width_, fb_height_);
-    
-    // Clear color and depth
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    
-    // Disable depth test for fullscreen quad
-    glDisable(GL_DEPTH_TEST);
-    
-    // Use lighting shader
-    glUseProgram(lighting_shader_);
-    
-    // Bind G-Buffer textures explicitly to avoid order confusion
-    GLint locGPosition = glGetUniformLocation(lighting_shader_, "GPosition");
-    GLint locGNormal = glGetUniformLocation(lighting_shader_, "GNormal");
-    GLint locGAlbedo = glGetUniformLocation(lighting_shader_, "GAlbedo");
-    GLint locGMaterial = glGetUniformLocation(lighting_shader_, "GMaterial");
-
-    // Use texture units 0-3 consistently with shader expectations
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, gbuffer_->getPositionTexture());
-    if (locGPosition >= 0) glUniform1i(locGPosition, 0);
-
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, gbuffer_->getNormalTexture());
-    if (locGNormal >= 0) glUniform1i(locGNormal, 1);
-
-    glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, gbuffer_->getAlbedoTexture());
-    if (locGAlbedo >= 0) glUniform1i(locGAlbedo, 2);
-
-    glActiveTexture(GL_TEXTURE3);
-    glBindTexture(GL_TEXTURE_2D, gbuffer_->getMaterialTexture());
-    if (locGMaterial >= 0) glUniform1i(locGMaterial, 3);
-
-    static bool first_lighting_call = true;
-    if (first_lighting_call) {
-        std::cout << "[Lighting Pass] Uniform locations - Position:" << locGPosition 
-                  << " Normal:" << locGNormal << " Albedo:" << locGAlbedo 
-                  << " Material:" << locGMaterial << "\n";
-        GLint b0, b1, b2, b3;
-        glGetIntegerv(GL_TEXTURE_BINDING_2D, &b3); // currently active is unit3
-        glActiveTexture(GL_TEXTURE0); glGetIntegerv(GL_TEXTURE_BINDING_2D, &b0);
-        glActiveTexture(GL_TEXTURE1); glGetIntegerv(GL_TEXTURE_BINDING_2D, &b1);
-        glActiveTexture(GL_TEXTURE2); glGetIntegerv(GL_TEXTURE_BINDING_2D, &b2);
-        glActiveTexture(GL_TEXTURE3); // restore
-        std::cout << "[Lighting Pass] Bound textures - u0:" << b0 << " u1:" << b1 << " u2:" << b2 << " u3:" << b3 << "\n";
-        first_lighting_call = false;
-    }
-    
-    // Set camera position
-    GLint locViewPos = glGetUniformLocation(lighting_shader_, "viewPos");
-    if (locViewPos >= 0) {
-        glm::vec3 camPos = camera->GetPosition();
-        glUniform3fv(locViewPos, 1, &camPos[0]);
-        
-        if (first_lighting_call) {
-            std::cout << "[Lighting Pass] Camera position: (" << camPos.x << ", " << camPos.y << ", " << camPos.z << ")\n";
-        }
-    }
-    
-    // Set view matrix for normal transformation
-    GLint locView = glGetUniformLocation(lighting_shader_, "uView");
-    if (locView >= 0) {
-        glUniformMatrix4fv(locView, 1, GL_FALSE, &camera->GetViewMatrix()[0][0]);
-    }
-    
-    // Set up lighting uniforms - process scene lights
-    int numDirLights = 0;
-    int numPointLights = 0;
-    int numSpotLights = 0;
-    int numAreaLights = 0;
-    glm::vec3 ambientLight(0.03f);
-    
-    static bool first_light_call = true;
-    if (first_light_call) {
-        std::cout << "[Lighting Pass] Processing " << scene->lights.size() << " lights\n";
-        first_light_call = false;
-    }
-    
-    for (size_t i = 0; i < scene->lights.size(); ++i) {
-        Light* light = scene->lights[i];
-        if (!light || !light->enabled) continue;
-        
-        switch (light->GetType()) {
-            case LightType::Directional: {
-                if (numDirLights >= 4) break;
-                DirectionalLight* dirLight = static_cast<DirectionalLight*>(light);
-                
-                std::string base = "dirLights[" + std::to_string(numDirLights) + "]";
-                GLint locDir = glGetUniformLocation(lighting_shader_, (base + ".direction").c_str());
-                GLint locColor = glGetUniformLocation(lighting_shader_, (base + ".color").c_str());
-                GLint locIntensity = glGetUniformLocation(lighting_shader_, (base + ".intensity").c_str());
-                
-                if (locDir >= 0) glUniform3fv(locDir, 1, &dirLight->direction[0]);
-                if (locColor >= 0) glUniform3fv(locColor, 1, &dirLight->color[0]);
-                if (locIntensity >= 0) glUniform1f(locIntensity, dirLight->intensity);
-                
-                numDirLights++;
-                break;
-            }
-            
-            case LightType::Point: {
-                if (numPointLights >= 4) break;
-                PointLight* pointLight = static_cast<PointLight*>(light);
-                
-                std::string base = "pointLights[" + std::to_string(numPointLights) + "]";
-                GLint locPos = glGetUniformLocation(lighting_shader_, (base + ".position").c_str());
-                GLint locColor = glGetUniformLocation(lighting_shader_, (base + ".color").c_str());
-                GLint locIntensity = glGetUniformLocation(lighting_shader_, (base + ".intensity").c_str());
-                GLint locRadius = glGetUniformLocation(lighting_shader_, (base + ".radius").c_str());
-                GLint locConstant = glGetUniformLocation(lighting_shader_, (base + ".constant").c_str());
-                GLint locLinear = glGetUniformLocation(lighting_shader_, (base + ".linear").c_str());
-                GLint locQuadratic = glGetUniformLocation(lighting_shader_, (base + ".quadratic").c_str());
-                
-                if (locPos >= 0) glUniform3fv(locPos, 1, &pointLight->position[0]);
-                if (locColor >= 0) glUniform3fv(locColor, 1, &pointLight->color[0]);
-                if (locIntensity >= 0) glUniform1f(locIntensity, pointLight->intensity);
-                if (locRadius >= 0) glUniform1f(locRadius, pointLight->radius);
-                if (locConstant >= 0) glUniform1f(locConstant, pointLight->constant);
-                if (locLinear >= 0) glUniform1f(locLinear, pointLight->linear);
-                if (locQuadratic >= 0) glUniform1f(locQuadratic, pointLight->quadratic);
-                
-                numPointLights++;
-                break;
-            }
-            
-            case LightType::Spot: {
-                if (numSpotLights >= 4) break;
-                SpotLight* spotLight = static_cast<SpotLight*>(light);
-                
-                std::string base = "spotLights[" + std::to_string(numSpotLights) + "]";
-                GLint locPos = glGetUniformLocation(lighting_shader_, (base + ".position").c_str());
-                GLint locDir = glGetUniformLocation(lighting_shader_, (base + ".direction").c_str());
-                GLint locColor = glGetUniformLocation(lighting_shader_, (base + ".color").c_str());
-                GLint locIntensity = glGetUniformLocation(lighting_shader_, (base + ".intensity").c_str());
-                GLint locInnerAngle = glGetUniformLocation(lighting_shader_, (base + ".innerAngle").c_str());
-                GLint locOuterAngle = glGetUniformLocation(lighting_shader_, (base + ".outerAngle").c_str());
-                GLint locConstant = glGetUniformLocation(lighting_shader_, (base + ".constant").c_str());
-                GLint locLinear = glGetUniformLocation(lighting_shader_, (base + ".linear").c_str());
-                GLint locQuadratic = glGetUniformLocation(lighting_shader_, (base + ".quadratic").c_str());
-                
-                if (locPos >= 0) glUniform3fv(locPos, 1, &spotLight->position[0]);
-                if (locDir >= 0) glUniform3fv(locDir, 1, &spotLight->direction[0]);
-                if (locColor >= 0) glUniform3fv(locColor, 1, &spotLight->color[0]);
-                if (locIntensity >= 0) glUniform1f(locIntensity, spotLight->intensity);
-                if (locInnerAngle >= 0) glUniform1f(locInnerAngle, spotLight->innerConeAngle);
-                if (locOuterAngle >= 0) glUniform1f(locOuterAngle, spotLight->outerConeAngle);
-                if (locConstant >= 0) glUniform1f(locConstant, spotLight->constant);
-                if (locLinear >= 0) glUniform1f(locLinear, spotLight->linear);
-                if (locQuadratic >= 0) glUniform1f(locQuadratic, spotLight->quadratic);
-                
-                numSpotLights++;
-                break;
-            }
-            
-            case LightType::Area: {
-                if (numAreaLights >= 4) break;
-                AreaLight* areaLight = static_cast<AreaLight*>(light);
-                
-                std::string base = "areaLights[" + std::to_string(numAreaLights) + "]";
-                GLint locPos = glGetUniformLocation(lighting_shader_, (base + ".position").c_str());
-                GLint locColor = glGetUniformLocation(lighting_shader_, (base + ".color").c_str());
-                GLint locIntensity = glGetUniformLocation(lighting_shader_, (base + ".intensity").c_str());
-                GLint locWidth = glGetUniformLocation(lighting_shader_, (base + ".width").c_str());
-                GLint locHeight = glGetUniformLocation(lighting_shader_, (base + ".height").c_str());
-                
-                if (locPos >= 0) glUniform3fv(locPos, 1, &areaLight->position[0]);
-                if (locColor >= 0) glUniform3fv(locColor, 1, &areaLight->color[0]);
-                if (locIntensity >= 0) glUniform1f(locIntensity, areaLight->intensity);
-                if (locWidth >= 0) glUniform1f(locWidth, areaLight->width);
-                if (locHeight >= 0) glUniform1f(locHeight, areaLight->height);
-                
-                numAreaLights++;
-                break;
-            }
-            
-            case LightType::Ambient: {
-                AmbientLight* ambLight = static_cast<AmbientLight*>(light);
-                ambientLight = ambLight->color * ambLight->intensity;
-                break;
-            }
-        }
-    }
-    
-    // Set light counts
-    GLint locNumDirLights = glGetUniformLocation(lighting_shader_, "numDirLights");
-    if (locNumDirLights >= 0) glUniform1i(locNumDirLights, numDirLights);
-    
-    GLint locNumPointLights = glGetUniformLocation(lighting_shader_, "numPointLights");
-    if (locNumPointLights >= 0) glUniform1i(locNumPointLights, numPointLights);
-    
-    GLint locNumSpotLights = glGetUniformLocation(lighting_shader_, "numSpotLights");
-    if (locNumSpotLights >= 0) glUniform1i(locNumSpotLights, numSpotLights);
-    
-    GLint locNumAreaLights = glGetUniformLocation(lighting_shader_, "numAreaLights");
-    if (locNumAreaLights >= 0) glUniform1i(locNumAreaLights, numAreaLights);
-    
-    // Ambient light
-    GLint locAmbient = glGetUniformLocation(lighting_shader_, "ambientLight");
-    if (locAmbient >= 0) {
-        glUniform3fv(locAmbient, 1, &ambientLight[0]);
-        static bool first_ambient = true;
-        if (first_ambient) {
-            std::cout << "[Lighting Pass] Ambient uniform loc:" << locAmbient 
-                      << " value: (" << ambientLight.x << ", " << ambientLight.y << ", " << ambientLight.z << ")\n";
-            first_ambient = false;
-        }
-    }
-    
-    // Render fullscreen quad
-    glBindVertexArray(quad_vao_);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    glBindVertexArray(0);
-    
-    // Check for OpenGL errors
-    GLenum err = glGetError();
-    if (err != GL_NO_ERROR) {
-        std::cout << "[Lighting Pass] OpenGL Error: " << err << "\n";
-    }
-    
-    // Check output for debugging
-    static bool first_output_check = true;
-    if (first_output_check) {
-        glReadBuffer(GL_COLOR_ATTACHMENT0);
-        float pixel[4];
-        glReadPixels(fb_width_/2, fb_height_/2, 1, 1, GL_RGBA, GL_FLOAT, pixel);
-        std::cout << "[Lighting Pass] Center pixel output: (" << pixel[0] << ", " << pixel[1] << ", " << pixel[2] << ", " << pixel[3] << ")\n";
-        std::cout << "[Lighting Pass] FBO: " << fbo_ << " Texture: " << fbo_texture_ << "\n";
-        first_output_check = false;
-    }
-    
-    // Re-enable depth test
-    glEnable(GL_DEPTH_TEST);
-    
-    // Unbind all texture units to prevent interference with ImGui rendering
-    for (int i = 0; i < 4; i++) {
-        glActiveTexture(GL_TEXTURE0 + i);
-        glBindTexture(GL_TEXTURE_2D, 0);
-    }
-    glActiveTexture(GL_TEXTURE0);  // Reset to default
-    
-    // Important: Unbind to default framebuffer so ImGui rendering doesn't affect our fbo_
-    // The fbo_texture_ will be used by ImGui::Image() to display the result
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glFlush();  // Ensure all GPU commands complete before texture is sampled
 }
 
 } // namespace kcShaders

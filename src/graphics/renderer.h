@@ -11,6 +11,9 @@ namespace kcShaders {
 class Scene;
 class Camera;
 class GBuffer;
+class ShaderProgram;
+class GBufferPass;
+class LightingPass;
 
 class Renderer {
   public:
@@ -46,11 +49,6 @@ class Renderer {
         const std::string& light_frag = "../../src/shaders/deferred_lighting.frag"
     );
     
-    // Legacy compatibility (deprecated, use loadForwardShaders instead)
-    bool use_shader(const std::string& vertex_path, const std::string& fragment_path) {
-        return loadForwardShaders(vertex_path, fragment_path);
-    }
-    
     // Shader utility methods
     std::string load_shader_source(const std::string& shaderpath);
     static GLuint compile_shader(GLenum type, const char* src);
@@ -61,8 +59,6 @@ class Renderer {
     void delete_framebuffer();
     
     // Deferred rendering methods
-    void renderGeometryPass(Scene* scene, Camera* camera);
-    void renderLightingPass(Scene* scene, Camera* camera);
     void setupFullscreenQuad();
     void cleanupFullscreenQuad();
 
@@ -92,14 +88,18 @@ class Renderer {
     
     // Deferred rendering resources
     GBuffer* gbuffer_;
-    GLuint geometry_shader_;  // Deferred geometry pass shader
-    GLuint lighting_shader_;  // Deferred lighting pass shader
+    
+    // ShaderProgram wrappers
+    std::unique_ptr<ShaderProgram> geometryShaderProgram_;
+    std::unique_ptr<ShaderProgram> lightingShaderProgram_;
+    
+    // Render passes
+    std::unique_ptr<GBufferPass> gbufferPass_;
+    std::unique_ptr<LightingPass> lightingPass_;
     
     // Fullscreen quad for lighting pass
     GLuint quad_vao_;
     GLuint quad_vbo_;
-    
-    bool shadertoy_mode_ = true; // Enable shadertoy-like uniforms by default
 };
 
 } // namespace graphics

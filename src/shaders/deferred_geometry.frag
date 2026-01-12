@@ -3,6 +3,8 @@
 in vec3 FragPos;
 in vec3 Normal;
 in vec2 TexCoord;
+in vec3 Tangent;
+in vec3 Bitangent;
 
 // G-Buffer outputs
 layout(location = 0) out vec4 GAlbedo;      // RGB: albedo, A: unused
@@ -42,24 +44,19 @@ uniform bool hasEmissiveMap;
 
 uniform mat4 uView;
 
-// Simple normal mapping (without full TBN - using approximation)
+// Proper normal mapping using TBN
 vec3 getNormal()
 {
-    vec3 normal = normalize(Normal);
+    vec3 n = normalize(Normal);
+    if (!hasNormalMap) return n;
     
-    if (hasNormalMap) {
-        // Sample normal from normal map
-        vec3 normalMap_sample = texture(normalMap, TexCoord).rgb;
-        
-        // Convert from [0,1] to [-1,1]
-        normalMap_sample = normalMap_sample * 2.0 - 1.0;
-        
-        // Simple approximation: blend between geometric normal and map normal
-        // Full TBN would be needed for proper results
-        normal = normalize(normal + normalMap_sample * 0.5);
-    }
+    vec3 t = normalize(Tangent);
+    vec3 b = normalize(Bitangent);
+    mat3 TBN = mat3(t, b, n);
     
-    return normal;
+    vec3 sampleN = texture(normalMap, TexCoord).rgb;
+    sampleN = normalize(sampleN * 2.0 - 1.0);
+    return normalize(TBN * sampleN);
 }
 
 void main()
@@ -73,13 +70,13 @@ void main()
     // Sample metallic
     float metallic = material.metallic;
     if (hasMetallicMap) {
-        metallic = texture(metallicMap, TexCoord).r;
+        metallic = texture(metallicMap, TexCoord).g;
     }
     
     // Sample roughness
     float roughness = material.roughness;
     if (hasRoughnessMap) {
-        roughness = texture(roughnessMap, TexCoord).r;
+        roughness = texture(roughnessMap, TexCoord).g;
     }
     
     // Sample AO

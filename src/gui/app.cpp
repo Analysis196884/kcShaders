@@ -210,7 +210,7 @@ bool App::Initialize(const std::string& title)
     std::string vpath(vertex_shader_path_);
     std::string fpath(fragment_shader_path_);
     if (!vpath.empty() && !fpath.empty()) {
-        if (renderer_->use_shader(vpath, fpath)) {
+        if (renderer_->loadForwardShaders(vpath, fpath)) {
             std::cout << "Default shaders loaded:\n";
             std::cout << "  Vertex: " << vpath << "\n";
             std::cout << "  Fragment: " << fpath << "\n";
@@ -1078,7 +1078,7 @@ void App::CheckShaderFileChanges()
     {
         std::cout << "Shader file changed, reloading...\n";
 
-        if (renderer_->use_shader(vertex_path, fragment_path)) 
+        if (renderer_->loadForwardShaders(vertex_path, fragment_path)) 
         {
             std::cout << "Shader reloaded successfully\n";
             if (vertex_changed) last_vertex_mod_time_ = vertex_mod;
