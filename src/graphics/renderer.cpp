@@ -10,6 +10,7 @@
 #include "pipeline/ForwardPipeline.h"
 #include "pipeline/DeferredPipeline.h"
 #include "pipeline/ShadertoyPipeline.h"
+#include "pipeline/RayTracingPipeline.h"
 
 #include <fstream>
 #include <sstream>
@@ -93,6 +94,13 @@ bool Renderer::initialize()
         fbo_, quad_vao_, fb_width_, fb_height_
     );
     
+    raytracingPipeline_ = std::make_unique<RayTracingPipeline>(
+        fbo_, quad_vao_, fb_width_, fb_height_
+    );
+    if (!raytracingPipeline_->initialize()) {
+        std::cerr << "Failed to initialize ray tracing pipeline\n";
+    }
+    
     // Initialize G-Buffer for deferred rendering
     gbuffer_ = new GBuffer();
     if (!gbuffer_->initialize(fb_width_, fb_height_)) {
@@ -135,6 +143,7 @@ void Renderer::shutdown()
     forwardPipeline_.reset();
     deferredPipeline_.reset();
     shadertoyPipeline_.reset();
+    raytracingPipeline_.reset();
     
     // Clean up deferred rendering resources
     if (gbuffer_) {
@@ -236,6 +245,38 @@ void Renderer::render_deferred(Scene* scene, Camera* camera)
     deferredPipeline_->execute(ctx);
 }
 
+void Renderer::render_raytracing(Scene* scene, Camera* camera)
+{
+    if (!camera) {
+        std::cerr << "[Renderer] Camera required for ray tracing\n";
+        return;
+    }
+    
+    camera_ = camera;
+    
+    if (!raytracingPipeline_) {
+        std::cerr << "[Renderer] Ray tracing pipeline not available\n";
+        return;
+    }
+    
+    RenderContext ctx;
+    ctx.scene = scene;
+    ctx.camera = camera;
+    ctx.viewportWidth = fb_width_;
+    ctx.viewportHeight = fb_height_;
+    
+    // Get time from GLFW for animation
+    static float startTime = glfwGetTime();
+    float currentTime = glfwGetTime();
+    static float lastTime = currentTime;
+    
+    ctx.totalTime = currentTime - startTime;
+    ctx.deltaTime = currentTime - lastTime;
+    lastTime = currentTime;
+    
+    raytracingPipeline_->execute(ctx);
+}
+
 bool Renderer::loadForwardShaders(const std::string& vertex_path, const std::string& fragment_path)
 {
     if (!forwardPipeline_) {
@@ -316,6 +357,9 @@ void Renderer::resize_framebuffer(int width, int height)
     }
     if (shadertoyPipeline_) {
         shadertoyPipeline_->resize(width, height);
+    }
+    if (raytracingPipeline_) {
+        raytracingPipeline_->resize(width, height);
     }
 }
 
@@ -443,6 +487,21 @@ bool Renderer::loadShadertoyShaders(const std::string& vertex_path, const std::s
     }
     
     return shadertoyPipeline_->loadShaders(vertex_path, fragment_path);
+}
+
+bool Renderer::loadRayTracingShaders(const std::string& compute_path, const std::string& display_vert, const std::string& display_frag)
+{
+    if (!raytracingPipeline_) {
+        std::cerr << "[Renderer] Ray tracing pipeline not initialized\n";
+        return false;
+    }
+    
+    bool success = raytracingPipeline_->loadComputeShader(compute_path);
+    if (success) {
+        success = raytracingPipeline_->loadDisplayShader(display_vert, display_frag);
+    }
+    
+    return success;
 }
 
 } // namespace kcShaders

@@ -57,6 +57,9 @@ App::App(const std::string& title)
     , last_light_frag_mod_time_(0)
     , last_shadertoy_vert_mod_time_(0)
     , last_shadertoy_frag_mod_time_(0)
+    , last_raytracing_compute_mod_time_(0)
+    , last_raytracing_display_vert_mod_time_(0)
+    , last_raytracing_display_frag_mod_time_(0)
     , shader_check_timer_(0.0f)
     , regular_font_(nullptr)
     , mono_font_(nullptr)
@@ -77,6 +80,11 @@ App::App(const std::string& title)
     // Initialize shadertoy shader paths with defaults
     strncpy_s(shadertoy_vert_shader_path_, "../../src/shaders/shadertoy/default.vert", sizeof(shadertoy_vert_shader_path_) - 1);
     strncpy_s(shadertoy_frag_shader_path_, "../../src/shaders/shadertoy/demo.frag", sizeof(shadertoy_frag_shader_path_) - 1);
+    
+    // Initialize ray tracing shader paths with defaults
+    strncpy_s(raytracing_compute_shader_path_, "../../src/shaders/raytracing/default.comp", sizeof(raytracing_compute_shader_path_) - 1);
+    strncpy_s(raytracing_display_vert_path_, "../../src/shaders/raytracing/display.vert", sizeof(raytracing_display_vert_path_) - 1);
+    strncpy_s(raytracing_display_frag_path_, "../../src/shaders/raytracing/display.frag", sizeof(raytracing_display_frag_path_) - 1);
     
     // Load config (will override defaults if file exists)
     LoadConfig();
@@ -100,10 +108,12 @@ bool App::Initialize(const std::string& title)
     }
 
     // Configure GLFW - Try OpenGL 3.3 first
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_MAXIMIZED, GLFW_TRUE);  // Start maximized
+    // Optional: Enable debug context for OpenGL
+    // glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
     
 #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
@@ -493,8 +503,9 @@ void App::Render()
             break;
             
         case RenderMode::RayTracing:
-            // Not yet implemented, fallback to shadertoy
-            renderer_->render_shadertoy();
+            if (current_scene_ && camera_) {
+                renderer_->render_raytracing(current_scene_, camera_);
+            }
             break;
     }
 
@@ -611,7 +622,7 @@ void App::RenderControlPanel()
     ImGui::Text("Rendering Mode");
     ImGui::Separator();
     
-    const char* render_modes[] = { "Forward Rendering", "Deferred Rendering", "Shadertoy", "Ray Tracing (Not Implemented)" };
+    const char* render_modes[] = { "Forward Rendering", "Deferred Rendering", "Shadertoy", "Ray Tracing" };
     int current_mode = static_cast<int>(render_mode_);
     
     if (ImGui::Combo("Mode", &current_mode, render_modes, IM_ARRAYSIZE(render_modes))) {
@@ -645,7 +656,14 @@ void App::RenderControlPanel()
                 break;
                 
             case RenderMode::RayTracing:
-                std::cout << "Ray Tracing mode is not yet implemented\n";
+                std::cout << "Switched to Ray Tracing mode\n";
+                if (!renderer_->loadRayTracingShaders(raytracing_compute_shader_path_, 
+                                                      raytracing_display_vert_path_, 
+                                                      raytracing_display_frag_path_)) {
+                    std::cerr << "Failed to load ray tracing shaders\n";
+                } else {
+                    std::cout << "Ray tracing shaders loaded successfully\n";
+                }
                 break;
         }
     }
@@ -761,6 +779,17 @@ void App::RenderShaderEditorPanel()
     ImGui::Text("Fragment Shader:");
     ImGui::SameLine();
     ImGui::InputText("##ShadertoyFrag", shadertoy_frag_shader_path_, sizeof(shadertoy_frag_shader_path_));
+
+    ImGui::Spacing();
+    ImGui::Spacing();
+
+    // Ray Tracing Shaders
+    ImGui::Text("Ray Tracing Shaders");
+    ImGui::Separator();
+    // Compute shader path input
+    ImGui::Text("Compute Shader:");
+    ImGui::SameLine();
+    ImGui::InputText("##RayTracingCompute", raytracing_compute_shader_path_, sizeof(raytracing_compute_shader_path_));
     
     ImGui::End();
 }
@@ -1045,6 +1074,13 @@ void App::LoadConfig()
                     strcpy_s(shadertoy_frag_shader_path_, sizeof(shadertoy_frag_shader_path_), path.c_str());
                 }
             }
+            else if (line.find("raytracing_compute_shader=") == 0) 
+            {
+                std::string path = line.substr(25);
+                if (!path.empty() && path.length() < sizeof(raytracing_compute_shader_path_)) {
+                    strcpy_s(raytracing_compute_shader_path_, sizeof(raytracing_compute_shader_path_), path.c_str());
+                }
+            }
         }
         config_file.close();
     } else {
@@ -1062,8 +1098,9 @@ void App::SaveConfig()
         config_file << "geom_frag_shader=" << geom_frag_shader_path_ << "\n";
         config_file << "light_vert_shader=" << light_vert_shader_path_ << "\n";
         config_file << "light_frag_shader=" << light_frag_shader_path_ << "\n";
-        config_file << "shadertoy_vert_shader=" << shadertoy_vert_shader_path_ << "\n";
-        config_file << "shadertoy_frag_shader=" << shadertoy_frag_shader_path_ << "\n";
+        config_file << "vertex_shader=" << shadertoy_vert_shader_path_ << "\n";
+        config_file << "fragment_shader=" << shadertoy_frag_shader_path_ << "\n";
+        config_file << "compute_shader=" << raytracing_compute_shader_path_ << "\n";
         config_file.close();
     }
 }
@@ -1193,9 +1230,44 @@ void App::CheckShaderFileChanges()
             break;
         }
         
-        case RenderMode::RayTracing:
-            // Not implemented yet
+        case RenderMode::RayTracing: {
+            std::string compute_path(raytracing_compute_shader_path_);
+            std::string vert_path(raytracing_display_vert_path_);
+            std::string frag_path(raytracing_display_frag_path_);
+            
+            if (compute_path.empty() && vert_path.empty() && frag_path.empty()) {
+                return;
+            }
+
+            std::time_t compute_mod = compute_path.empty() ? 0 : GetFileModTime(compute_path);
+            std::time_t vert_mod = vert_path.empty() ? 0 : GetFileModTime(vert_path);
+            std::time_t frag_mod = frag_path.empty() ? 0 : GetFileModTime(frag_path);
+
+            bool compute_changed = (!compute_path.empty() && compute_mod != 0 && compute_mod != last_raytracing_compute_mod_time_);
+            bool vert_changed = (!vert_path.empty() && vert_mod != 0 && vert_mod != last_raytracing_display_vert_mod_time_);
+            bool frag_changed = (!frag_path.empty() && frag_mod != 0 && frag_mod != last_raytracing_display_frag_mod_time_);
+
+            // Initialize on first check
+            if ((!compute_path.empty() && last_raytracing_compute_mod_time_ == 0) ||
+                (!vert_path.empty() && last_raytracing_display_vert_mod_time_ == 0) ||
+                (!frag_path.empty() && last_raytracing_display_frag_mod_time_ == 0)) {
+                if (!compute_path.empty()) last_raytracing_compute_mod_time_ = compute_mod;
+                if (!vert_path.empty()) last_raytracing_display_vert_mod_time_ = vert_mod;
+                if (!frag_path.empty()) last_raytracing_display_frag_mod_time_ = frag_mod;
+                return;
+            }
+
+            if (compute_changed || vert_changed || frag_changed) {
+                std::cout << "[RayTracing] Shader file changed, reloading...\n";
+                if (renderer_->loadRayTracingShaders(compute_path, vert_path, frag_path)) {
+                    std::cout << "[RayTracing] Shaders reloaded successfully\n";
+                    if (compute_changed) last_raytracing_compute_mod_time_ = compute_mod;
+                    if (vert_changed) last_raytracing_display_vert_mod_time_ = vert_mod;
+                    if (frag_changed) last_raytracing_display_frag_mod_time_ = frag_mod;
+                }
+            }
             break;
+        }
     }
 }
 

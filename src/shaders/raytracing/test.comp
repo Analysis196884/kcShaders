@@ -1,0 +1,29 @@
+#version 430 core
+
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(rgba32f, binding = 0) uniform image2D outputImage;
+
+uniform vec3 iResolution;
+uniform float iTime;
+
+void main() {
+    ivec2 pixelCoords = ivec2(gl_GlobalInvocationID.xy);
+    
+    // Check bounds
+    if (pixelCoords.x >= int(iResolution.x) || pixelCoords.y >= int(iResolution.y)) {
+        return;
+    }
+    
+    // Simple color gradient test
+    vec2 uv = vec2(pixelCoords) / iResolution.xy;
+    
+    // Animated color based on time and position
+    vec3 color = vec3(
+        0.5 + 0.5 * sin(iTime + uv.x * 3.14159),
+        0.5 + 0.5 * cos(iTime + uv.y * 3.14159),
+        0.5 + 0.5 * sin(iTime * 2.0)
+    );
+    
+    // Write to output texture
+    imageStore(outputImage, pixelCoords, vec4(color, 1.0));
+}

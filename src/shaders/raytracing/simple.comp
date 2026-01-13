@@ -1,0 +1,125 @@
+#version 430 core
+
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(rgba32f, binding = 0) uniform image2D outputImage;
+
+// Uniforms
+uniform vec3 iResolution;
+uniform float iTime;
+uniform int iFrame;
+
+// Camera uniforms
+uniform vec3 cameraPosition;
+uniform vec3 cameraFront;
+uniform vec3 cameraUp;
+uniform vec3 cameraRight;
+uniform float cameraFov;
+
+// Ray structure
+struct Ray {
+    vec3 origin;
+    vec3 direction;
+};
+
+// Hit record
+struct HitRecord {
+    bool hit;
+    float t;
+    vec3 point;
+    vec3 normal;
+    vec3 albedo;
+};
+
+// Sphere intersection
+HitRecord intersectSphere(Ray ray, vec3 center, float radius, vec3 albedo) {
+    HitRecord rec;
+    rec.hit = false;
+    
+    vec3 oc = ray.origin - center;
+    float a = dot(ray.direction, ray.direction);
+    float b = 2.0 * dot(oc, ray.direction);
+    float c = dot(oc, oc) - radius * radius;
+    float discriminant = b * b - 4.0 * a * c;
+    
+    if (discriminant > 0.0) {
+        float t = (-b - sqrt(discriminant)) / (2.0 * a);
+        if (t > 0.001) {
+            rec.hit = true;
+            rec.t = t;
+            rec.point = ray.origin + t * ray.direction;
+            rec.normal = normalize(rec.point - center);
+            rec.albedo = albedo;
+        }
+    }
+    
+    return rec;
+}
+
+// Simple scene
+HitRecord intersectScene(Ray ray) {
+    HitRecord closest;
+    closest.hit = false;
+    closest.t = 1e10;
+    
+    // One big sphere in front of camera
+    HitRecord sphere1 = intersectSphere(ray, vec3(0.0, 0.0, -5.0), 1.0, vec3(0.8, 0.3, 0.3));
+    if (sphere1.hit && sphere1.t < closest.t) {
+        closest = sphere1;
+    }
+    
+    return closest;
+}
+
+// Sky color
+vec3 skyColor(vec3 direction) {
+    float t = 0.5 * (direction.y + 1.0);
+    return mix(vec3(1.0, 1.0, 1.0), vec3(0.5, 0.7, 1.0), t);
+}
+
+void main() {
+    ivec2 pixelCoords = ivec2(gl_GlobalInvocationID.xy);
+    
+    // Check bounds
+    if (pixelCoords.x >= int(iResolution.x) || pixelCoords.y >= int(iResolution.y)) {
+        return;
+    }
+    
+    // Simple UV without random
+    vec2 uv = vec2(pixelCoords) / iResolution.xy;
+    uv = uv * 2.0 - 1.0; // [-1, 1]
+    uv.x *= iResolution.x / iResolution.y; // Aspect ratio
+    
+    // Generate ray from camera
+    float fovRadians = radians(cameraFov);
+    float halfHeight = tan(fovRadians / 2.0);
+    
+    vec3 rayDir = normalize(
+        cameraFront + 
+        uv.x * halfHeight * cameraRight + 
+        uv.y * halfHeight * cameraUp
+    );
+    
+    Ray ray;
+    ray.origin = cameraPosition;
+    ray.direction = rayDir;
+    
+    // Simple ray trace - single bounce
+    HitRecord hit = intersectScene(ray);
+    
+    vec3 color;
+    if (hit.hit) {
+        // Simple diffuse shading
+        vec3 lightDir = normalize(vec3(1.0, 1.0, 1.0));
+        float diff = max(dot(hit.normal, lightDir), 0.0);
+        color = hit.albedo * (0.3 + 0.7 * diff); // Ambient + diffuse
+    } else {
+        // Sky
+        color = skyColor(rayDir);
+    }
+    
+    // Gamma correction
+    color = pow(color, vec3(1.0 / 2.2));
+    
+    // Write to output texture
+    imageStore(outputImage, pixelCoords, vec4(color, 1.0));
+}

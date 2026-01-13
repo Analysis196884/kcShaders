@@ -120,6 +120,11 @@ private:
     char shadertoy_vert_shader_path_[256];
     char shadertoy_frag_shader_path_[256];
     
+    // Ray tracing shader paths
+    char raytracing_compute_shader_path_[256];
+    char raytracing_display_vert_path_[256];
+    char raytracing_display_frag_path_[256];
+    
     // Shader file watch
     time_t last_vertex_mod_time_;
     time_t last_fragment_mod_time_;
@@ -133,6 +138,11 @@ private:
     // Shadertoy shader file watch
     time_t last_shadertoy_vert_mod_time_;
     time_t last_shadertoy_frag_mod_time_;
+    
+    // Ray tracing shader file watch
+    time_t last_raytracing_compute_mod_time_;
+    time_t last_raytracing_display_vert_mod_time_;
+    time_t last_raytracing_display_frag_mod_time_;
     
     float shader_check_timer_;
     

@@ -15,6 +15,7 @@ class RenderPipeline;
 class ForwardPipeline;
 class DeferredPipeline;
 class ShadertoyPipeline;
+class RayTracingPipeline;
 
 class Renderer {
   public:
@@ -31,6 +32,7 @@ class Renderer {
     void render_shadertoy();
     void render_forward(kcShaders::Scene* scene, kcShaders::Camera* camera);
     void render_deferred(kcShaders::Scene* scene, kcShaders::Camera* camera);
+    void render_raytracing(kcShaders::Scene* scene, kcShaders::Camera* camera);
     GLuint get_framebuffer_texture() const { return fbo_texture_; }
     int get_fb_width() const { return fb_width_; }
     int get_fb_height() const { return fb_height_; }
@@ -47,6 +49,7 @@ class Renderer {
         const std::string& light_frag = "../../src/shaders/deferred_lighting.frag"
     );
     bool loadShadertoyShaders(const std::string& vertex_path, const std::string& fragment_path);
+    bool loadRayTracingShaders(const std::string& compute_path, const std::string& display_vert, const std::string& display_frag);
 
   private:
     void create_framebuffer();
@@ -81,6 +84,7 @@ class Renderer {
     std::unique_ptr<ForwardPipeline> forwardPipeline_;
     std::unique_ptr<DeferredPipeline> deferredPipeline_;
     std::unique_ptr<ShadertoyPipeline> shadertoyPipeline_;
+    std::unique_ptr<RayTracingPipeline> raytracingPipeline_;
     RenderPipeline* activePipeline_;  // Non-owning pointer to active pipeline
     
     // Fullscreen quad for deferred rendering
