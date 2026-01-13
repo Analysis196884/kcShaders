@@ -244,8 +244,7 @@ void main()
     vec3 ambient = ambientLight * Albedo * ao;
     vec3 color = ambient + Lo;
 
-    // Tone map + gamma
-    color = color / (color + vec3(1.0));
+    // Gamma correction
     color = pow(color, vec3(1.0/2.2));
 
     FragColor = vec4(color, 1.0);

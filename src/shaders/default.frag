@@ -299,9 +299,6 @@ void main()
     
     vec3 color = ambient + Lo + finalEmissive;
     
-    // HDR tonemapping (simple Reinhard)
-    color = color / (color + vec3(1.0));
-    
     // Gamma correction
     color = pow(color, vec3(1.0/2.2));
     
