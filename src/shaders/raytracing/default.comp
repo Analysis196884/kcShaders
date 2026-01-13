@@ -39,6 +39,17 @@ struct BVHNode {
     uint triCount;
 };
 
+struct GpuMaterial {
+    vec3 albedo;
+    float metallic;
+    vec3 emissive;
+    float roughness;
+    float ao;
+    float opacity;
+    float emissiveStrength;
+    float _pad0;
+};
+
 // SSBOs
 layout(std430, binding = 1) buffer Vertices {
     GpuVertex vertices[];
@@ -50,6 +61,10 @@ layout(std430, binding = 2) buffer Triangles {
 
 layout(std430, binding = 3) buffer BVHNodes {
     BVHNode nodes[];
+};
+
+layout(std430, binding = 4) buffer Materials {
+    GpuMaterial materials[];
 };
 
 // Random number generator
@@ -88,7 +103,7 @@ struct HitRecord {
     float t;
     vec3 point;
     vec3 normal;
-    vec3 albedo;
+    uint materialId;
 };
 
 // AABB intersection
@@ -167,7 +182,7 @@ HitRecord intersectBVH(Ray ray) {
                     closest.t = t;
                     closest.point = ray.origin + t * ray.direction;
                     closest.normal = normal;
-                    closest.albedo = vec3(0.8, 0.8, 0.8);  // Default albedo
+                    closest.materialId = tri.materialId;
                 }
             }
         } else {
@@ -184,31 +199,65 @@ HitRecord intersectBVH(Ray ray) {
 
 // Sky color
 vec3 skyColor(vec3 direction) {
-    float t = 0.5 * (direction.y + 1.0);
-    return mix(vec3(1.0, 1.0, 1.0), vec3(0.5, 0.7, 1.0), t) * 1.2;
+    float t = 0.5 * (2*direction.z + 2.0);
+    return (1.0 - t) * vec3(1.0, 1.0, 1.0) + t * vec3(0.5, 0.7, 1.0);
 }
 
-// Path tracing
+// Path tracing with materials
 vec3 trace(Ray ray) {
     vec3 color = vec3(1.0);
+    vec3 emitted = vec3(0.0);
     
     for (int bounce = 0; bounce < maxBounces; bounce++) {
         HitRecord hit = intersectBVH(ray);
         
         if (hit.hit) {
-            // Lambertian diffuse
-            vec3 target = hit.point + hit.normal + randomInUnitSphere();
-            ray.origin = hit.point;
-            ray.direction = normalize(target - hit.point);
-            color *= hit.albedo;
+            // Get material
+            GpuMaterial mat = materials[hit.materialId];
+            
+            // Add emissive contribution
+            if (mat.emissiveStrength > 0.0) {
+                emitted += color * mat.emissive * mat.emissiveStrength;
+            }
+            
+            // Calculate next ray direction based on material
+            vec3 scatter;
+            if (mat.metallic > 0.5) {
+                // Metallic - reflection
+                vec3 reflected = reflect(ray.direction, hit.normal);
+                scatter = normalize(reflected + mat.roughness * randomInUnitSphere());
+            } else {
+                // Dielectric - diffuse
+                scatter = normalize(hit.normal + randomInUnitSphere());
+            }
+            
+            // Ensure valid direction
+            if (dot(scatter, hit.normal) <= 0.0) {
+                scatter = hit.normal;
+            }
+            
+            // Update ray
+            ray.origin = hit.point + hit.normal * 0.001;
+            ray.direction = scatter;
+            
+            // Accumulate color with albedo
+            color *= mat.albedo * mat.ao;
+            
+            // Russian roulette for path termination
+            float p = max(color.r, max(color.g, color.b));
+            if (random() > p) {
+                break;
+            }
+            color /= p;
+            
         } else {
             // Hit sky
-            color *= skyColor(ray.direction);
+            emitted += color * skyColor(ray.direction);
             break;
         }
     }
     
-    return color;
+    return emitted;
 }
 
 void main() {
@@ -223,20 +272,14 @@ void main() {
     seed = hash(uint(pixelCoords.x) + uint(pixelCoords.y) * uint(iResolution.x) + uint(iFrame) * 719393u);
     
     // Generate ray from camera
-    // Convert pixel coordinates to NDC space [-1, 1]
     vec2 uv = (vec2(pixelCoords) + vec2(random(), random())) / iResolution.xy;
-    uv = uv * 2.0 - 1.0;  // Map from [0,1] to [-1,1]
+    uv = uv * 2.0 - 1.0;
     
-    // Calculate aspect ratio
     float aspect = iResolution.x / iResolution.y;
-    
-    // Calculate FOV scale
     float fovRadians = radians(cameraFov);
     float halfHeight = tan(fovRadians * 0.5);
     float halfWidth = aspect * halfHeight;
     
-    // Calculate ray direction in camera space
-    // uv.x is horizontal [-1, 1], uv.y is vertical [-1, 1]
     vec3 rayDir = normalize(
         cameraFront + 
         uv.x * halfWidth * cameraRight + 
@@ -247,7 +290,7 @@ void main() {
     ray.origin = cameraPosition;
     ray.direction = rayDir;
     
-    // Trace rays (multi-sampling)
+    // Trace rays
     vec3 color = vec3(0.0);
     for (int i = 0; i < samplesPerPixel; i++) {
         color += trace(ray);
@@ -255,7 +298,8 @@ void main() {
     color /= float(samplesPerPixel);
     
     // Gamma correction
-    color = pow(clamp(color, 0.0, 1.0), vec3(1.0 / 2.2));
+    color = pow(color, vec3(1.0 / 2.2));  // Gamma correction
+    color = clamp(color, 0.0, 1.0);
     
     // Write to output texture
     imageStore(outputImage, pixelCoords, vec4(color, 1.0));

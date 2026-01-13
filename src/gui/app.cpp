@@ -662,7 +662,6 @@ void App::RenderControlPanel()
                                                       raytracing_display_frag_path_)) {
                     std::cerr << "Failed to load ray tracing shaders\n";
                 } else {
-                    std::cout << "Ray tracing shaders loaded successfully\n";
                     // Upload scene data to GPU for BVH traversal
                     renderer_->uploadRayTracingScene(current_scene_);
                 }

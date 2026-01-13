@@ -6,9 +6,7 @@ namespace kcShaders {
 
 void BVHBuilder::build(const std::vector<GpuVertex>& vertices, 
                        const std::vector<GpuTriangle>& triangles)
-{
-    std::cout << "[BVH] Building BVH for " << triangles.size() << " triangles...\n";
-    
+{   
     if (triangles.empty()) {
         std::cerr << "[BVH] No triangles to build BVH\n";
         return;
@@ -41,6 +39,8 @@ void BVHBuilder::build(const std::vector<GpuVertex>& vertices,
     BVHNode root;
     root.leftFirst = 0;
     root.triCount = static_cast<uint32_t>(triangles.size());
+    root.boundsMin = glm::vec3(1e30f);
+    root.boundsMax = glm::vec3(-1e30f);
     
     // Compute root bounds
     for (const auto& tc : triangleCentroids_) {
@@ -53,7 +53,7 @@ void BVHBuilder::build(const std::vector<GpuVertex>& vertices,
     // Recursively subdivide
     subdivide(0, vertices, triangles);
     
-    std::cout << "[BVH] Built BVH with " << nodes_.size() << " nodes\n";
+    // std::cout << "[BVH] Built BVH with " << nodes_.size() << " nodes\n";
 }
 
 void BVHBuilder::subdivide(uint32_t nodeIdx, 
@@ -72,8 +72,22 @@ void BVHBuilder::subdivide(uint32_t nodeIdx,
     float splitPos;
     float cost = findBestSplitPlane(nodeIdx, axis, splitPos);
     
-    // Stop if no good split found
-    float noSplitCost = node.triCount;
+    // Calculate cost of not splitting (all triangles in one leaf)
+    AABB nodeBox;
+    nodeBox.min = node.boundsMin;
+    nodeBox.max = node.boundsMax;
+    float noSplitCost = node.triCount * nodeBox.area();
+    
+    // // Debug output for first few subdivisions
+    // static int subdivisionCount = 0;
+    // if (subdivisionCount < 5) {
+    //     std::cout << "[BVH] Subdivision #" << subdivisionCount 
+    //               << ": node " << nodeIdx << " with " << node.triCount << " triangles"
+    //               << ", splitCost=" << cost << ", noSplitCost=" << noSplitCost << "\n";
+    //     subdivisionCount++;
+    // }
+    
+    // Stop if no good split found (split is more expensive than not splitting)
     if (cost >= noSplitCost) {
         return;
     }

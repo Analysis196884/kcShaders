@@ -4,9 +4,11 @@
 #include "../../scene/camera.h"
 #include "../../scene/scene.h"
 #include "../../scene/mesh.h"
+#include "../../scene/material.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <map>
 #include <glm/gtc/type_ptr.hpp>
 
 // Helper function to check OpenGL errors
@@ -30,6 +32,7 @@ RayTracingPipeline::RayTracingPipeline(GLuint fbo, GLuint vao, int width, int he
     , vertexBuffer_(0)
     , triangleBuffer_(0)
     , bvhBuffer_(0)
+    , materialBuffer_(0)
     , sceneUploaded_(false)
     , maxBounces_(4)
     , samplesPerPixel_(1)
@@ -43,9 +46,7 @@ RayTracingPipeline::~RayTracingPipeline()
 }
 
 bool RayTracingPipeline::initialize()
-{
-    std::cout << "[RayTracingPipeline] Initializing...\n";
-    
+{   
     // Create output texture for compute shader
     createOutputTexture();
     
@@ -61,8 +62,6 @@ void RayTracingPipeline::createOutputTexture()
     if (outputTexture_ != 0) {
         deleteOutputTexture();
     }
-    
-    std::cout << "[RayTracingPipeline] Creating output texture: " << width_ << "x" << height_ << "\n";
     
     glGenTextures(1, &outputTexture_);
     CheckGLError("glGenTextures");
@@ -81,8 +80,6 @@ void RayTracingPipeline::createOutputTexture()
     CheckGLError("glTexParameteri");
     
     glBindTexture(GL_TEXTURE_2D, 0);
-    
-    std::cout << "[RayTracingPipeline] Output texture created successfully (ID: " << outputTexture_ << ")\n";
 }
 
 void RayTracingPipeline::deleteOutputTexture()
@@ -159,7 +156,7 @@ bool RayTracingPipeline::loadComputeShader(const std::string& computePath)
 
 bool RayTracingPipeline::loadDisplayShader(const std::string& vertPath, const std::string& fragPath)
 {
-    std::cout << "[RayTracingPipeline] Loading display shader: " << vertPath << " + " << fragPath << "\n";
+    // std::cout << "[RayTracingPipeline] Loading display shader: " << vertPath << " + " << fragPath << "\n";
     
     displayShader_ = std::make_unique<ShaderProgram>();
     if (!displayShader_->loadFromFiles(vertPath, fragPath)) {
@@ -167,7 +164,7 @@ bool RayTracingPipeline::loadDisplayShader(const std::string& vertPath, const st
         return false;
     }
     
-    std::cout << "[RayTracingPipeline] Display shader loaded successfully\n";
+    // std::cout << "[RayTracingPipeline] Display shader loaded successfully\n";
     return true;
 }
 
@@ -260,12 +257,12 @@ void RayTracingPipeline::execute(RenderContext& ctx)
     GLuint numGroupsY = (height_ + 15) / 16;
     
     // Only log first frame to avoid spam
-    static bool firstFrame = true;
-    if (firstFrame) {
-        std::cout << "[RayTracingPipeline] Dispatching compute: " << numGroupsX << "x" << numGroupsY 
-                  << " groups for " << width_ << "x" << height_ << " pixels\n";
-        firstFrame = false;
-    }
+    // static bool firstFrame = true;
+    // if (firstFrame) {
+    //     std::cout << "[RayTracingPipeline] Dispatching compute: " << numGroupsX << "x" << numGroupsY 
+    //               << " groups for " << width_ << "x" << height_ << " pixels\n";
+    //     firstFrame = false;
+    // }
     
     glDispatchCompute(numGroupsX, numGroupsY, 1);
     CheckGLError("glDispatchCompute");
@@ -329,8 +326,6 @@ void RayTracingPipeline::resize(int width, int height)
     
     // Reset frame count for progressive rendering
     frameCount_ = 0;
-    
-    std::cout << "[RayTracingPipeline] Resized to " << width << "x" << height << "\n";
 }
 
 void RayTracingPipeline::cleanup()
@@ -347,12 +342,11 @@ void RayTracingPipeline::cleanup()
 }
 
 void RayTracingPipeline::createSceneBuffers()
-{
-    std::cout << "[RayTracingPipeline] Creating scene buffers...\n";
-    
+{   
     glGenBuffers(1, &vertexBuffer_);
     glGenBuffers(1, &triangleBuffer_);
     glGenBuffers(1, &bvhBuffer_);
+    glGenBuffers(1, &materialBuffer_);
     
     CheckGLError("createSceneBuffers");
 }
@@ -371,6 +365,10 @@ void RayTracingPipeline::deleteSceneBuffers()
         glDeleteBuffers(1, &bvhBuffer_);
         bvhBuffer_ = 0;
     }
+    if (materialBuffer_ != 0) {
+        glDeleteBuffers(1, &materialBuffer_);
+        materialBuffer_ = 0;
+    }
 }
 
 void RayTracingPipeline::uploadScene(Scene* scene)
@@ -380,7 +378,7 @@ void RayTracingPipeline::uploadScene(Scene* scene)
         return;
     }
     
-    std::cout << "[RayTracingPipeline] Uploading scene to GPU...\n";
+    // std::cout << "[RayTracingPipeline] Uploading scene to GPU...\n";
     
     // Collect all render items (mesh + transform)
     std::vector<RenderItem> renderItems;
@@ -394,14 +392,55 @@ void RayTracingPipeline::uploadScene(Scene* scene)
     // Temporary storage for all triangles
     std::vector<GpuVertex> allVertices;
     std::vector<GpuTriangle> allTriangles;
+    std::vector<GpuMaterial> allMaterials;
+    
+    // Material index map (Material* -> GPU index)
+    std::map<Material*, uint32_t> materialIndexMap;
+    
+    // Add default material at index 0
+    GpuMaterial defaultMat;
+    defaultMat.albedo = glm::vec3(0.8f, 0.8f, 0.8f);
+    defaultMat.metallic = 0.0f;
+    defaultMat.roughness = 0.5f;
+    defaultMat.ao = 1.0f;
+    defaultMat.opacity = 1.0f;
+    defaultMat.emissive = glm::vec3(0.0f);
+    defaultMat.emissiveStrength = 0.0f;
+    defaultMat._pad0 = 0.0f;
+    allMaterials.push_back(defaultMat);
     
     // Process each render item
     for (const auto& item : renderItems) {
         if (!item.mesh) continue;
         
         Mesh* mesh = item.mesh;
+        Material* material = item.material;
         glm::mat4 modelMatrix = item.modelMatrix;
         glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(modelMatrix)));
+        
+        // Get or create material index
+        uint32_t materialIndex = 0;  // Default material
+        if (material) {
+            auto it = materialIndexMap.find(material);
+            if (it != materialIndexMap.end()) {
+                materialIndex = it->second;
+            } else {
+                // Add new material
+                materialIndex = static_cast<uint32_t>(allMaterials.size());
+                materialIndexMap[material] = materialIndex;
+                
+                GpuMaterial gpuMat;
+                gpuMat.albedo = material->albedo;
+                gpuMat.metallic = material->metallic;
+                gpuMat.roughness = material->roughness;
+                gpuMat.ao = material->ao;
+                gpuMat.opacity = material->opacity;
+                gpuMat.emissive = material->emissive;
+                gpuMat.emissiveStrength = material->emissiveStrength;
+                gpuMat._pad0 = 0.0f;
+                allMaterials.push_back(gpuMat);
+            }
+        }
         
         uint32_t baseVertex = static_cast<uint32_t>(allVertices.size());
         
@@ -447,7 +486,7 @@ void RayTracingPipeline::uploadScene(Scene* scene)
             tri.v0 = i0;
             tri.v1 = i1;
             tri.v2 = i2;
-            tri.materialId = 0; // Default material for now
+            tri.materialId = materialIndex;  // Use actual material index
             
             allTriangles.push_back(tri);
         }
@@ -458,11 +497,12 @@ void RayTracingPipeline::uploadScene(Scene* scene)
         return;
     }
     
-    std::cout << "[RayTracingPipeline] Collected " << allVertices.size() 
-              << " vertices, " << allTriangles.size() << " triangles\n";
+    // std::cout << "[RayTracingPipeline] Collected " << allVertices.size() 
+    //           << " vertices, " << allTriangles.size() << " triangles, "
+    //           << allMaterials.size() << " materials\n";
     
     // Build BVH
-    std::cout << "[RayTracingPipeline] Building BVH...\n";
+    // std::cout << "[RayTracingPipeline] Building BVH...\n";
     BVHBuilder bvhBuilder;
     bvhBuilder.build(allVertices, allTriangles);
     
@@ -495,10 +535,16 @@ void RayTracingPipeline::uploadScene(Scene* scene)
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, bvhBuffer_);
     CheckGLError("upload BVH");
     
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, materialBuffer_);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, allMaterials.size() * sizeof(GpuMaterial), 
+                 allMaterials.data(), GL_STATIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, materialBuffer_);
+    CheckGLError("upload materials");
+    
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     
     sceneUploaded_ = true;
-    std::cout << "[RayTracingPipeline] Scene data uploaded to GPU successfully\n";
+    // std::cout << "[RayTracingPipeline] Scene data uploaded to GPU successfully\n";
 }
 
 } // namespace kcShaders

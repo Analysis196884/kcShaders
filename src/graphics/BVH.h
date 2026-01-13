@@ -22,6 +22,18 @@ struct GpuTriangle {
     uint32_t materialId;   // Material index
 };
 
+// GPU-friendly material data (std430 layout compatible)
+struct GpuMaterial {
+    glm::vec3 albedo;
+    float metallic;
+    glm::vec3 emissive;
+    float roughness;
+    float ao;
+    float opacity;
+    float emissiveStrength;
+    float _pad0;  // Padding for alignment
+};
+
 // GPU-friendly BVH node (std430 layout compatible)
 struct BVHNode {
     glm::vec3 boundsMin;

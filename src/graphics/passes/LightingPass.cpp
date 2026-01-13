@@ -117,7 +117,7 @@ void LightingPass::setLightUniforms(RenderContext& ctx) {
     int numPointLights = 0;
     int numSpotLights = 0;
     int numAreaLights = 0;
-    glm::vec3 ambientLight(0.03f);
+    glm::vec3 ambientLight(0.0f);
     
     // Process scene lights
     for (Light* light : ctx.scene->lights) {

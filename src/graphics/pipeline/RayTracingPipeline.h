@@ -85,6 +85,7 @@ private:
     GLuint vertexBuffer_;
     GLuint triangleBuffer_;
     GLuint bvhBuffer_;
+    GLuint materialBuffer_;
     bool sceneUploaded_;
     
     // Ray tracing parameters
