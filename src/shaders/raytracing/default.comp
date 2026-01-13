@@ -17,7 +17,42 @@ uniform vec3 cameraUp;
 uniform vec3 cameraRight;
 uniform float cameraFov;
 
-// Random number generator (simple hash-based)
+// Scene data structures (std430 layout)
+struct GpuVertex {
+    vec3 position;
+    float _pad0;
+    vec3 normal;
+    float _pad1;
+    vec2 uv;
+    vec2 _pad2;
+};
+
+struct GpuTriangle {
+    uint v0, v1, v2;
+    uint materialId;
+};
+
+struct BVHNode {
+    vec3 boundsMin;
+    uint leftFirst;
+    vec3 boundsMax;
+    uint triCount;
+};
+
+// SSBOs
+layout(std430, binding = 1) buffer Vertices {
+    GpuVertex vertices[];
+};
+
+layout(std430, binding = 2) buffer Triangles {
+    GpuTriangle triangles[];
+};
+
+layout(std430, binding = 3) buffer BVHNodes {
+    BVHNode nodes[];
+};
+
+// Random number generator
 uint seed;
 
 uint hash(uint x) {
@@ -35,16 +70,10 @@ float random() {
 }
 
 vec3 randomInUnitSphere() {
-    // Use rejection sampling with a maximum iteration limit to avoid infinite loops
-    vec3 p;
-    for (int i = 0; i < 8; i++) {  // Max 8 iterations
-        p = 2.0 * vec3(random(), random(), random()) - 1.0;
-        if (dot(p, p) < 1.0) {
-            return p;
-        }
-    }
-    // Fallback: return normalized random vector
-    return normalize(p);
+    float theta = random() * 2.0 * 3.14159265;
+    float phi = acos(2.0 * random() - 1.0);
+    float r = pow(random(), 1.0/3.0);
+    return r * vec3(sin(phi) * cos(theta), sin(phi) * sin(theta), cos(phi));
 }
 
 // Ray structure
@@ -62,100 +91,116 @@ struct HitRecord {
     vec3 albedo;
 };
 
-// Sphere intersection
-HitRecord intersectSphere(Ray ray, vec3 center, float radius, vec3 albedo) {
-    HitRecord rec;
-    rec.hit = false;
-    
-    vec3 oc = ray.origin - center;
-    float a = dot(ray.direction, ray.direction);
-    float b = 2.0 * dot(oc, ray.direction);
-    float c = dot(oc, oc) - radius * radius;
-    float discriminant = b * b - 4.0 * a * c;
-    
-    if (discriminant > 0.0) {
-        float t = (-b - sqrt(discriminant)) / (2.0 * a);
-        if (t > 0.001) {
-            rec.hit = true;
-            rec.t = t;
-            rec.point = ray.origin + t * ray.direction;
-            rec.normal = normalize(rec.point - center);
-            rec.albedo = albedo;
-        }
-    }
-    
-    return rec;
+// AABB intersection
+bool intersectAABB(Ray ray, vec3 boundsMin, vec3 boundsMax) {
+    vec3 invDir = 1.0 / ray.direction;
+    vec3 t0 = (boundsMin - ray.origin) * invDir;
+    vec3 t1 = (boundsMax - ray.origin) * invDir;
+    vec3 tmin = min(t0, t1);
+    vec3 tmax = max(t0, t1);
+    float tenter = max(max(tmin.x, tmin.y), tmin.z);
+    float texit = min(min(tmax.x, tmax.y), tmax.z);
+    return tenter <= texit && texit > 0.001;
 }
 
-// Scene intersection (simple demo scene)
-HitRecord intersectScene(Ray ray) {
+// Ray-Triangle intersection (Möller–Trumbore)
+bool intersectTriangle(Ray ray, vec3 v0, vec3 v1, vec3 v2, out float t, out vec3 normal) {
+    vec3 e1 = v1 - v0;
+    vec3 e2 = v2 - v0;
+    vec3 p = cross(ray.direction, e2);
+    float det = dot(e1, p);
+    
+    if (abs(det) < 1e-6) return false;
+    
+    float invDet = 1.0 / det;
+    vec3 s = ray.origin - v0;
+    float u = dot(s, p) * invDet;
+    if (u < 0.0 || u > 1.0) return false;
+    
+    vec3 q = cross(s, e1);
+    float v = dot(ray.direction, q) * invDet;
+    if (v < 0.0 || u + v > 1.0) return false;
+    
+    t = dot(e2, q) * invDet;
+    if (t < 0.001) return false;
+    
+    normal = normalize(cross(e1, e2));
+    if (dot(normal, ray.direction) > 0.0) {
+        normal = -normal;  // Flip if back-facing
+    }
+    
+    return true;
+}
+
+// BVH traversal
+HitRecord intersectBVH(Ray ray) {
     HitRecord closest;
     closest.hit = false;
-    closest.t = 1e10;
+    closest.t = 1e30;
     
-    // Ground plane (large sphere)
-    HitRecord ground = intersectSphere(ray, vec3(0.0, 0.0, -1000.5), 1000.0, vec3(0.5, 0.5, 0.5));
-    if (ground.hit && ground.t < closest.t) {
-        closest = ground;
-    }
+    // Stack for traversal (no recursion on GPU)
+    int stack[64];
+    int stackPtr = 0;
+    stack[stackPtr++] = 0;  // Start with root
     
-    // Center sphere
-    HitRecord sphere1 = intersectSphere(ray, vec3(0.0, -5.0, 0.0), 0.8, vec3(0.8, 0.3, 0.3));
-    if (sphere1.hit && sphere1.t < closest.t) {
-        closest = sphere1;
-    }
-    
-    // Left sphere
-    HitRecord sphere2 = intersectSphere(ray, vec3(-1.5, -5.0, 0.0), 0.6, vec3(0.3, 0.8, 0.3));
-    if (sphere2.hit && sphere2.t < closest.t) {
-        closest = sphere2;
-    }
-    
-    // Right sphere
-    HitRecord sphere3 = intersectSphere(ray, vec3(1.5, -5.0, 0.0), 0.6, vec3(0.3, 0.3, 0.8));
-    if (sphere3.hit && sphere3.t < closest.t) {
-        closest = sphere3;
+    while (stackPtr > 0) {
+        int nodeIdx = stack[--stackPtr];
+        BVHNode node = nodes[nodeIdx];
+        
+        // Test AABB
+        if (!intersectAABB(ray, node.boundsMin, node.boundsMax)) {
+            continue;
+        }
+        
+        if (node.triCount > 0) {
+            // Leaf node - test triangles
+            for (uint i = 0; i < node.triCount; i++) {
+                GpuTriangle tri = triangles[node.leftFirst + i];
+                vec3 v0 = vertices[tri.v0].position;
+                vec3 v1 = vertices[tri.v1].position;
+                vec3 v2 = vertices[tri.v2].position;
+                
+                float t;
+                vec3 normal;
+                if (intersectTriangle(ray, v0, v1, v2, t, normal) && t < closest.t) {
+                    closest.hit = true;
+                    closest.t = t;
+                    closest.point = ray.origin + t * ray.direction;
+                    closest.normal = normal;
+                    closest.albedo = vec3(0.8, 0.8, 0.8);  // Default albedo
+                }
+            }
+        } else {
+            // Internal node - push children
+            if (stackPtr < 62) {  // Leave room for 2 children
+                stack[stackPtr++] = int(node.leftFirst);
+                stack[stackPtr++] = int(node.leftFirst) + 1;
+            }
+        }
     }
     
     return closest;
 }
 
-// Simple sky color
+// Sky color
 vec3 skyColor(vec3 direction) {
     float t = 0.5 * (direction.y + 1.0);
-    return mix(vec3(1.0, 1.0, 1.0), vec3(0.5, 0.7, 1.0), t) * 1.5; // Brighter sky
+    return mix(vec3(1.0, 1.0, 1.0), vec3(0.5, 0.7, 1.0), t) * 1.2;
 }
 
-// Ray trace a single ray
+// Path tracing
 vec3 trace(Ray ray) {
     vec3 color = vec3(1.0);
     
     for (int bounce = 0; bounce < maxBounces; bounce++) {
-        HitRecord hit = intersectScene(ray);
+        HitRecord hit = intersectBVH(ray);
         
         if (hit.hit) {
             // Lambertian diffuse
-            vec3 randomDir = randomInUnitSphere();
-            vec3 target = hit.point + hit.normal + randomDir;
-            vec3 newDir = target - hit.point;
-            
-            // Ensure direction is valid
-            float dirLength = length(newDir);
-            if (dirLength < 0.001) {
-                // Degenerate direction, use normal instead
-                newDir = hit.normal;
-            } else {
-                newDir = normalize(newDir);
-            }
-            
-            ray.origin = hit.point + hit.normal * 0.001; // Offset to avoid self-intersection
-            ray.direction = newDir;
+            vec3 target = hit.point + hit.normal + randomInUnitSphere();
+            ray.origin = hit.point;
+            ray.direction = normalize(target - hit.point);
             color *= hit.albedo;
-            
-            // Prevent color from becoming too dark or invalid
-            if (dot(color, color) < 0.001) {
-                return vec3(0.0);
-            }
         } else {
             // Hit sky
             color *= skyColor(ray.direction);
@@ -178,16 +223,23 @@ void main() {
     seed = hash(uint(pixelCoords.x) + uint(pixelCoords.y) * uint(iResolution.x) + uint(iFrame) * 719393u);
     
     // Generate ray from camera
+    // Convert pixel coordinates to NDC space [-1, 1]
     vec2 uv = (vec2(pixelCoords) + vec2(random(), random())) / iResolution.xy;
-    uv = uv * 2.0 - 1.0; // [-1, 1]
-    uv.x *= iResolution.x / iResolution.y; // Aspect ratio correction
+    uv = uv * 2.0 - 1.0;  // Map from [0,1] to [-1,1]
     
+    // Calculate aspect ratio
+    float aspect = iResolution.x / iResolution.y;
+    
+    // Calculate FOV scale
     float fovRadians = radians(cameraFov);
-    float halfHeight = tan(fovRadians / 2.0);
+    float halfHeight = tan(fovRadians * 0.5);
+    float halfWidth = aspect * halfHeight;
     
+    // Calculate ray direction in camera space
+    // uv.x is horizontal [-1, 1], uv.y is vertical [-1, 1]
     vec3 rayDir = normalize(
         cameraFront + 
-        uv.x * halfHeight * cameraRight + 
+        uv.x * halfWidth * cameraRight + 
         uv.y * halfHeight * cameraUp
     );
     
@@ -202,14 +254,8 @@ void main() {
     }
     color /= float(samplesPerPixel);
     
-    // Clamp to prevent invalid values
-    color = clamp(color, 0.0, 10.0);
-    
     // Gamma correction
-    color = pow(color, vec3(1.0 / 2.2));
-    
-    // Final clamp
-    color = clamp(color, 0.0, 1.0);
+    color = pow(clamp(color, 0.0, 1.0), vec3(1.0 / 2.2));
     
     // Write to output texture
     imageStore(outputImage, pixelCoords, vec4(color, 1.0));

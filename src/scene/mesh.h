@@ -53,6 +53,9 @@ public:
 
     // query
     bool isUploaded() const { return uploaded; }
+    const std::vector<Vertex>& GetVertices() const { return vertices; }
+    const std::vector<uint32_t>& GetIndices() const { return indices; }
+    const Vertex& GetVertex(size_t index) const { return vertices[index]; }
     uint32_t indexCount() const { return static_cast<uint32_t>(indices.size()); }
     uint32_t GetIndexCount() const { return indexCount(); }
     uint32_t GetVertexCount() const { return static_cast<uint32_t>(vertices.size()); }

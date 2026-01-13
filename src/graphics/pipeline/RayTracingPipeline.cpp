@@ -1,6 +1,9 @@
 #include "RayTracingPipeline.h"
 #include "../ShaderProgram.h"
+#include "../BVH.h"
 #include "../../scene/camera.h"
+#include "../../scene/scene.h"
+#include "../../scene/mesh.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -24,6 +27,10 @@ RayTracingPipeline::RayTracingPipeline(GLuint fbo, GLuint vao, int width, int he
     , height_(height)
     , outputTexture_(0)
     , computeShaderProgram_(0)
+    , vertexBuffer_(0)
+    , triangleBuffer_(0)
+    , bvhBuffer_(0)
+    , sceneUploaded_(false)
     , maxBounces_(4)
     , samplesPerPixel_(1)
     , frameCount_(0)
@@ -41,6 +48,9 @@ bool RayTracingPipeline::initialize()
     
     // Create output texture for compute shader
     createOutputTexture();
+    
+    // Create scene buffers
+    createSceneBuffers();
     
     std::cout << "[RayTracingPipeline] Initialized\n";
     return true;
@@ -223,8 +233,9 @@ void RayTracingPipeline::execute(RenderContext& ctx)
     if (ctx.camera) {
         glm::vec3 camPos = ctx.camera->GetPosition();
         glm::vec3 camFront = ctx.camera->GetFront();
-        glm::vec3 camUp = ctx.camera->GetUp();
         glm::vec3 camRight = ctx.camera->GetRight();
+        glm::vec3 camUp = glm::cross(camRight, camFront);
+        float camFov = ctx.camera->GetFov();
         
         loc = glGetUniformLocation(computeShaderProgram_, "cameraPosition");
         if (loc >= 0) glUniform3fv(loc, 1, glm::value_ptr(camPos));
@@ -239,7 +250,7 @@ void RayTracingPipeline::execute(RenderContext& ctx)
         if (loc >= 0) glUniform3fv(loc, 1, glm::value_ptr(camRight));
         
         loc = glGetUniformLocation(computeShaderProgram_, "cameraFov");
-        if (loc >= 0) glUniform1f(loc, 45.0f);
+        if (loc >= 0) glUniform1f(loc, camFov);
         
         CheckGLError("camera uniforms");
     }
@@ -325,6 +336,7 @@ void RayTracingPipeline::resize(int width, int height)
 void RayTracingPipeline::cleanup()
 {
     deleteOutputTexture();
+    deleteSceneBuffers();
     
     if (computeShaderProgram_ != 0) {
         glDeleteProgram(computeShaderProgram_);
@@ -332,6 +344,161 @@ void RayTracingPipeline::cleanup()
     }
     
     displayShader_.reset();
+}
+
+void RayTracingPipeline::createSceneBuffers()
+{
+    std::cout << "[RayTracingPipeline] Creating scene buffers...\n";
+    
+    glGenBuffers(1, &vertexBuffer_);
+    glGenBuffers(1, &triangleBuffer_);
+    glGenBuffers(1, &bvhBuffer_);
+    
+    CheckGLError("createSceneBuffers");
+}
+
+void RayTracingPipeline::deleteSceneBuffers()
+{
+    if (vertexBuffer_ != 0) {
+        glDeleteBuffers(1, &vertexBuffer_);
+        vertexBuffer_ = 0;
+    }
+    if (triangleBuffer_ != 0) {
+        glDeleteBuffers(1, &triangleBuffer_);
+        triangleBuffer_ = 0;
+    }
+    if (bvhBuffer_ != 0) {
+        glDeleteBuffers(1, &bvhBuffer_);
+        bvhBuffer_ = 0;
+    }
+}
+
+void RayTracingPipeline::uploadScene(Scene* scene)
+{
+    if (!scene) {
+        std::cerr << "[RayTracingPipeline] Cannot upload null scene\n";
+        return;
+    }
+    
+    std::cout << "[RayTracingPipeline] Uploading scene to GPU...\n";
+    
+    // Collect all render items (mesh + transform)
+    std::vector<RenderItem> renderItems;
+    scene->collectRenderItems(renderItems);
+    
+    if (renderItems.empty()) {
+        std::cout << "[RayTracingPipeline] Scene has no meshes to render\n";
+        return;
+    }
+    
+    // Temporary storage for all triangles
+    std::vector<GpuVertex> allVertices;
+    std::vector<GpuTriangle> allTriangles;
+    
+    // Process each render item
+    for (const auto& item : renderItems) {
+        if (!item.mesh) continue;
+        
+        Mesh* mesh = item.mesh;
+        glm::mat4 modelMatrix = item.modelMatrix;
+        glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(modelMatrix)));
+        
+        uint32_t baseVertex = static_cast<uint32_t>(allVertices.size());
+        
+        // Add vertices (transformed to world space)
+        for (size_t i = 0; i < mesh->GetVertexCount(); i++) {
+            GpuVertex gpuVert;
+            
+            // Transform position to world space
+            glm::vec4 worldPos = modelMatrix * glm::vec4(mesh->GetVertex(i).position, 1.0f);
+            gpuVert.position = glm::vec3(worldPos);
+            gpuVert._pad0 = 0.0f;
+            
+            // Transform normal to world space
+            if (i < mesh->GetVertexCount()) {
+                gpuVert.normal = glm::normalize(normalMatrix * mesh->GetVertex(i).normal);
+            } else {
+                gpuVert.normal = glm::vec3(0.0f, 1.0f, 0.0f);
+            }
+            gpuVert._pad1 = 0.0f;
+            
+            // UV coordinates
+            if (i < mesh->GetIndexCount()) {
+                gpuVert.uv = mesh->GetVertex(i).uv;
+            } else {
+                gpuVert.uv = glm::vec2(0.0f);
+            }
+            gpuVert._pad2[0] = 0.0f;
+            gpuVert._pad2[1] = 0.0f;
+            
+            allVertices.push_back(gpuVert);
+        }
+        
+        // Add triangles
+        const auto& meshIndices = mesh->GetIndices();
+        for (size_t i = 0; i < meshIndices.size(); i += 3) {
+            if (i + 2 >= meshIndices.size()) break;
+            
+            uint32_t i0 = baseVertex + meshIndices[i];
+            uint32_t i1 = baseVertex + meshIndices[i + 1];
+            uint32_t i2 = baseVertex + meshIndices[i + 2];
+            
+            GpuTriangle tri;
+            tri.v0 = i0;
+            tri.v1 = i1;
+            tri.v2 = i2;
+            tri.materialId = 0; // Default material for now
+            
+            allTriangles.push_back(tri);
+        }
+    }
+    
+    if (allTriangles.empty()) {
+        std::cout << "[RayTracingPipeline] No triangles to render\n";
+        return;
+    }
+    
+    std::cout << "[RayTracingPipeline] Collected " << allVertices.size() 
+              << " vertices, " << allTriangles.size() << " triangles\n";
+    
+    // Build BVH
+    std::cout << "[RayTracingPipeline] Building BVH...\n";
+    BVHBuilder bvhBuilder;
+    bvhBuilder.build(allVertices, allTriangles);
+    
+    const auto& bvhNodes = bvhBuilder.getNodes();
+    std::cout << "[RayTracingPipeline] BVH built with " << bvhNodes.size() << " nodes\n";
+    
+    // Reorder triangles based on BVH
+    const auto& triIndices = bvhBuilder.getTriangleIndices();
+    std::vector<GpuTriangle> reorderedTriangles(allTriangles.size());
+    for (size_t i = 0; i < triIndices.size(); i++) {
+        reorderedTriangles[i] = allTriangles[triIndices[i]];
+    }
+    
+    // Upload to GPU
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, vertexBuffer_);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, allVertices.size() * sizeof(GpuVertex), 
+                 allVertices.data(), GL_STATIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, vertexBuffer_);
+    CheckGLError("upload vertices");
+    
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, triangleBuffer_);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, reorderedTriangles.size() * sizeof(GpuTriangle), 
+                 reorderedTriangles.data(), GL_STATIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, triangleBuffer_);
+    CheckGLError("upload triangles");
+    
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, bvhBuffer_);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, bvhNodes.size() * sizeof(BVHNode), 
+                 bvhNodes.data(), GL_STATIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, bvhBuffer_);
+    CheckGLError("upload BVH");
+    
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    
+    sceneUploaded_ = true;
+    std::cout << "[RayTracingPipeline] Scene data uploaded to GPU successfully\n";
 }
 
 } // namespace kcShaders

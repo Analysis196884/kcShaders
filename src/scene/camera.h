@@ -20,6 +20,7 @@ public:
     glm::vec3 GetFront() const { return front_; }
     glm::vec3 GetRight() const { return right_; }
     glm::vec3 GetUp() const { return up_; }
+    float GetFov() const { return fov_; }
 
     glm::mat4 GetViewMatrix() const;
     glm::mat4 GetProjectionMatrix() const;
@@ -53,6 +54,7 @@ private:
     float far_plane_;
 
     void UpdateCameraVectors();
+    void UpdateTarget();
 };
 
 } // namespace kcShaders

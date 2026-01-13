@@ -33,6 +33,10 @@ class Renderer {
     void render_forward(kcShaders::Scene* scene, kcShaders::Camera* camera);
     void render_deferred(kcShaders::Scene* scene, kcShaders::Camera* camera);
     void render_raytracing(kcShaders::Scene* scene, kcShaders::Camera* camera);
+    
+    // Ray tracing scene management
+    void uploadRayTracingScene(kcShaders::Scene* scene);
+    
     GLuint get_framebuffer_texture() const { return fbo_texture_; }
     int get_fb_width() const { return fb_width_; }
     int get_fb_height() const { return fb_height_; }

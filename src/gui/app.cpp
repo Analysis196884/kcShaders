@@ -657,12 +657,14 @@ void App::RenderControlPanel()
                 
             case RenderMode::RayTracing:
                 std::cout << "Switched to Ray Tracing mode\n";
-                if (!renderer_->loadRayTracingShaders(raytracing_compute_shader_path_, 
-                                                      raytracing_display_vert_path_, 
+                if (!renderer_->loadRayTracingShaders(raytracing_compute_shader_path_,
+                                                      raytracing_display_vert_path_,
                                                       raytracing_display_frag_path_)) {
                     std::cerr << "Failed to load ray tracing shaders\n";
                 } else {
                     std::cout << "Ray tracing shaders loaded successfully\n";
+                    // Upload scene data to GPU for BVH traversal
+                    renderer_->uploadRayTracingScene(current_scene_);
                 }
                 break;
         }
@@ -1016,69 +1018,37 @@ void App::LoadConfig()
     std::ifstream config_file("shader_config.ini");
     if (config_file.is_open()) {
         std::string line;
-        while (std::getline(config_file, line)) 
+        struct ShaderConfigEntry
         {
-            if (line.find("vertex_shader=") == 0) 
+            const char* key;
+            char*       dst;
+            size_t      dst_size;
+        };
+
+        ShaderConfigEntry entries[] = {
+            { "forward_vert_shader=",      vertex_shader_path_,             sizeof(vertex_shader_path_) },
+            { "forward_frag_shader=",      fragment_shader_path_,           sizeof(fragment_shader_path_) },
+            { "geom_vert_shader=",         geom_vert_shader_path_,           sizeof(geom_vert_shader_path_) },
+            { "geom_frag_shader=",         geom_frag_shader_path_,           sizeof(geom_frag_shader_path_) },
+            { "light_vert_shader=",        light_vert_shader_path_,          sizeof(light_vert_shader_path_) },
+            { "light_frag_shader=",        light_frag_shader_path_,          sizeof(light_frag_shader_path_) },
+            { "shadertoy_vert_shader=",    shadertoy_vert_shader_path_,      sizeof(shadertoy_vert_shader_path_) },
+            { "shadertoy_frag_shader=",    shadertoy_frag_shader_path_,      sizeof(shadertoy_frag_shader_path_) },
+            { "raytracing_compute_shader=",raytracing_compute_shader_path_, sizeof(raytracing_compute_shader_path_) }
+        };
+
+        while (std::getline(config_file, line))
+        {
+            for (const auto& e : entries)
             {
-                std::string path = line.substr(14);
-                if (!path.empty() && path.length() < sizeof(vertex_shader_path_)) {
-                    strcpy_s(vertex_shader_path_, sizeof(vertex_shader_path_), path.c_str());
-                }
-            } 
-            else if (line.find("fragment_shader=") == 0) 
-            {
-                std::string path = line.substr(16);
-                if (!path.empty() && path.length() < sizeof(fragment_shader_path_)) {
-                    strcpy_s(fragment_shader_path_, sizeof(fragment_shader_path_), path.c_str());
-                }
-            }
-            else if (line.find("geom_vert_shader=") == 0) 
-            {
-                std::string path = line.substr(17);
-                if (!path.empty() && path.length() < sizeof(geom_vert_shader_path_)) {
-                    strcpy_s(geom_vert_shader_path_, sizeof(geom_vert_shader_path_), path.c_str());
-                }
-            }
-            else if (line.find("geom_frag_shader=") == 0) 
-            {
-                std::string path = line.substr(17);
-                if (!path.empty() && path.length() < sizeof(geom_frag_shader_path_)) {
-                    strcpy_s(geom_frag_shader_path_, sizeof(geom_frag_shader_path_), path.c_str());
-                }
-            }
-            else if (line.find("light_vert_shader=") == 0) 
-            {
-                std::string path = line.substr(18);
-                if (!path.empty() && path.length() < sizeof(light_vert_shader_path_)) {
-                    strcpy_s(light_vert_shader_path_, sizeof(light_vert_shader_path_), path.c_str());
-                }
-            }
-            else if (line.find("light_frag_shader=") == 0) 
-            {
-                std::string path = line.substr(18);
-                if (!path.empty() && path.length() < sizeof(light_frag_shader_path_)) {
-                    strcpy_s(light_frag_shader_path_, sizeof(light_frag_shader_path_), path.c_str());
-                }
-            }
-            else if (line.find("shadertoy_vert_shader=") == 0) 
-            {
-                std::string path = line.substr(22);
-                if (!path.empty() && path.length() < sizeof(shadertoy_vert_shader_path_)) {
-                    strcpy_s(shadertoy_vert_shader_path_, sizeof(shadertoy_vert_shader_path_), path.c_str());
-                }
-            }
-            else if (line.find("shadertoy_frag_shader=") == 0) 
-            {
-                std::string path = line.substr(22);
-                if (!path.empty() && path.length() < sizeof(shadertoy_frag_shader_path_)) {
-                    strcpy_s(shadertoy_frag_shader_path_, sizeof(shadertoy_frag_shader_path_), path.c_str());
-                }
-            }
-            else if (line.find("raytracing_compute_shader=") == 0) 
-            {
-                std::string path = line.substr(25);
-                if (!path.empty() && path.length() < sizeof(raytracing_compute_shader_path_)) {
-                    strcpy_s(raytracing_compute_shader_path_, sizeof(raytracing_compute_shader_path_), path.c_str());
+                if (line.rfind(e.key, 0) == 0)   // starts_with (before C++20)
+                {
+                    std::string value = line.substr(std::strlen(e.key));
+                    if (!value.empty() && value.size() < e.dst_size)
+                    {
+                        strcpy_s(e.dst, e.dst_size, value.c_str());
+                    }
+                    break;
                 }
             }
         }
@@ -1092,15 +1062,15 @@ void App::SaveConfig()
 {
     std::ofstream config_file("shader_config.ini");
     if (config_file.is_open()) {
-        config_file << "vertex_shader=" << vertex_shader_path_ << "\n";
-        config_file << "fragment_shader=" << fragment_shader_path_ << "\n";
+        config_file << "forward_vert_shader=" << vertex_shader_path_ << "\n";
+        config_file << "forward_frag_shader=" << fragment_shader_path_ << "\n";
         config_file << "geom_vert_shader=" << geom_vert_shader_path_ << "\n";
         config_file << "geom_frag_shader=" << geom_frag_shader_path_ << "\n";
         config_file << "light_vert_shader=" << light_vert_shader_path_ << "\n";
         config_file << "light_frag_shader=" << light_frag_shader_path_ << "\n";
-        config_file << "vertex_shader=" << shadertoy_vert_shader_path_ << "\n";
-        config_file << "fragment_shader=" << shadertoy_frag_shader_path_ << "\n";
-        config_file << "compute_shader=" << raytracing_compute_shader_path_ << "\n";
+        config_file << "shadertoy_vertex_shader=" << shadertoy_vert_shader_path_ << "\n";
+        config_file << "shadertoy_frag_shader=" << shadertoy_frag_shader_path_ << "\n";
+        config_file << "raytracing_compute_shader=" << raytracing_compute_shader_path_ << "\n";
         config_file.close();
     }
 }

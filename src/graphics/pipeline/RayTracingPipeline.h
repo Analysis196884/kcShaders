@@ -55,9 +55,17 @@ public:
     void setMaxBounces(int bounces) { maxBounces_ = bounces; }
     void setSamplesPerPixel(int samples) { samplesPerPixel_ = samples; }
     
+    /**
+     * @brief Upload scene data to GPU
+     * @param scene Scene to upload
+     */
+    void uploadScene(class Scene* scene);
+    
 private:
     void createOutputTexture();
     void deleteOutputTexture();
+    void createSceneBuffers();
+    void deleteSceneBuffers();
     
     GLuint fbo_;
     GLuint vao_;
@@ -72,6 +80,12 @@ private:
     
     // Output texture from compute shader
     GLuint outputTexture_;
+    
+    // Scene data SSBOs
+    GLuint vertexBuffer_;
+    GLuint triangleBuffer_;
+    GLuint bvhBuffer_;
+    bool sceneUploaded_;
     
     // Ray tracing parameters
     int maxBounces_;

@@ -504,4 +504,14 @@ bool Renderer::loadRayTracingShaders(const std::string& compute_path, const std:
     return success;
 }
 
+void Renderer::uploadRayTracingScene(Scene* scene)
+{
+    if (!raytracingPipeline_) {
+        std::cerr << "[Renderer] Ray tracing pipeline not initialized\n";
+        return;
+    }
+    
+    raytracingPipeline_->uploadScene(scene);
+}
+
 } // namespace kcShaders
