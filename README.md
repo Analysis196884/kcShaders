@@ -30,13 +30,13 @@ make
 
 ## Gallery
 ### Rasterization:
-<img src="images/sponza.png" style="width:45%; display:inline-block;"/>
-<img src="images/normal.png" style="width:45%; display:inline-block;"/>
+<img src="images/sponza.png" width="500"/>
+<img src="images/normal.png" width="500"/>
 
 ### Ray Tracing:
-<img src="images/cornell.png" style="width:45%; display:inline-block;"/>
-<img src="images/rtw.png" style="width:45%; display:inline-block;"/>
+<img src="images/cornell.png" width="500"/>
+<img src="images/rtw.png" width="500"/>
 
 ### Shadertoy:
-<img src="images/snowfall.png" style="width:45%; display:inline-block;"/>
-<img src="images/solarsystem.png" style="width:45%; display:inline-block;"/>
+<img src="images/snowfall.png" width="500"/>
+<img src="images/solarsystem.png" width="500"/>
