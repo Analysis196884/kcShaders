@@ -2,6 +2,7 @@
 
 layout(local_size_x = 16, local_size_y = 16) in;
 layout(rgba32f, binding = 0) uniform image2D outputImage;
+layout(rgba32f, binding = 1) uniform image2D accumulationImage; // Temporal accumulation
 
 // Uniforms
 uniform vec3 iResolution;
@@ -10,213 +11,384 @@ uniform int iFrame;
 uniform int maxBounces;
 uniform int samplesPerPixel;
 
-// Camera uniforms
+// Camera uniforms (Controlled by CPU, assuming they are orthogonal now)
 uniform vec3 cameraPosition;
 uniform vec3 cameraFront;
 uniform vec3 cameraUp;
 uniform vec3 cameraRight;
 uniform float cameraFov;
 
-// Random number generator (simple hash-based)
+// --- Constants ---
+const float PI = 3.14159265359;
+const float EPSILON = 0.001;
+const float INFINITY = 1e30;
+
+// Material Type IDs
+const int MAT_LAMBERTIAN = 0;
+const int MAT_METAL = 1;
+const int MAT_DIELECTRIC = 2;
+
+// --- Data Structures ---
+
+struct Ray {
+    vec3 origin;
+    vec3 direction;
+};
+
+struct Material {
+    int type;
+    vec3 albedo;
+    float fuzz;   // For Metal
+    float refIdx; // For Dielectric
+};
+
+struct HitRecord {
+    bool hit;
+    float t;
+    vec3 point;
+    vec3 normal;
+    bool frontFace; // Records if the ray hits from outside or inside
+    Material mat;
+};
+
+// --- Random Number Generator ---
 uint seed;
 
+// Simple hash function
 uint hash(uint x) {
-    x ^= x >> 16;
-    x *= 0x7feb352dU;
-    x ^= x >> 15;
-    x *= 0x846ca68bU;
-    x ^= x >> 16;
+    x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16;
     return x;
 }
 
+// Float random [0, 1]
 float random() {
     seed = hash(seed);
     return float(seed) / 4294967296.0;
 }
 
 vec3 randomInUnitSphere() {
-    // Use rejection sampling with a maximum iteration limit to avoid infinite loops
     vec3 p;
-    for (int i = 0; i < 8; i++) {  // Max 8 iterations
-        p = 2.0 * vec3(random(), random(), random()) - 1.0;
-        if (dot(p, p) < 1.0) {
-            return p;
-        }
-    }
-    // Fallback: return normalized random vector
-    return normalize(p);
+    do {
+        p = 2.0 * vec3(random(), random(), random()) - vec3(1.0);
+    } while (length(p) >= 1.0);
+    return p;
 }
 
-// Ray structure
-struct Ray {
-    vec3 origin;
-    vec3 direction;
-};
+vec3 sampleHemisphereCosine(vec3 N) {
+    float r1 = random();
+    float r2 = random();
 
-// Hit record
-struct HitRecord {
-    bool hit;
-    float t;
-    vec3 point;
-    vec3 normal;
-    vec3 albedo;
-};
+    float PI = 3.14159;
+    float phi = 2.0 * PI * r1;
+    float r = sqrt(r2);
 
-// Sphere intersection
-HitRecord intersectSphere(Ray ray, vec3 center, float radius, vec3 albedo) {
-    HitRecord rec;
-    rec.hit = false;
-    
-    vec3 oc = ray.origin - center;
-    float a = dot(ray.direction, ray.direction);
-    float b = 2.0 * dot(oc, ray.direction);
+    vec3 local = vec3(
+        r * cos(phi),
+        r * sin(phi),
+        sqrt(1.0 - r2)
+    );
+
+    // transform to world space (TBN)
+    vec3 T = normalize(cross(abs(N.y) < 0.99 ? vec3(0,1,0) : vec3(1,0,0), N));
+    vec3 B = cross(N, T);
+
+    return normalize(local.x * T + local.y * B + local.z * N);
+}
+
+// --- Optics Math Utils ---
+
+// Fresnel approximation (Schlick)
+float reflectance(float cosine, float ref_idx) {
+    float r0 = (1.0 - ref_idx) / (1.0 + ref_idx);
+    r0 = r0 * r0;
+    return r0 + (1.0 - r0) * pow((1.0 - cosine), 5.0);
+}
+
+// Refraction calculation (Snell's Law)
+vec3 refractRay(vec3 uv, vec3 n, float etai_over_etat) {
+    float cos_theta = min(dot(-uv, n), 1.0);
+    vec3 r_out_perp = etai_over_etat * (uv + cos_theta * n);
+    float r_out_parallel = -sqrt(abs(1.0 - dot(r_out_perp, r_out_perp)));
+    return r_out_perp + r_out_parallel * n;
+}
+
+// --- Material Scatter Logic ---
+
+bool scatter(Ray r_in, HitRecord rec, out vec3 attenuation, out Ray scattered) {
+    if (rec.mat.type == MAT_LAMBERTIAN) {
+        // Lambertian: Random reflection direction
+        vec3 scatter_direction = sampleHemisphereCosine(rec.normal);
+        
+        // Catch degenerate scatter direction
+        if (abs(scatter_direction.x) < 1e-8 && abs(scatter_direction.y) < 1e-8 && abs(scatter_direction.z) < 1e-8)
+            scatter_direction = rec.normal;
+            
+        scattered = Ray(rec.point, normalize(scatter_direction));
+        attenuation = rec.mat.albedo;
+        return true;
+    } 
+    else if (rec.mat.type == MAT_METAL) {
+        // Metal: Specular reflection + fuzziness
+        vec3 reflected = reflect(normalize(r_in.direction), rec.normal);
+        scattered = Ray(rec.point, normalize(reflected + rec.mat.fuzz * randomInUnitSphere()));
+        attenuation = rec.mat.albedo;
+        return (dot(scattered.direction, rec.normal) > 0.0);
+    } 
+    else if (rec.mat.type == MAT_DIELECTRIC) {
+        // Dielectric (Glass): Refraction + Reflection
+        attenuation = vec3(1.0); // Glass absorbs very little light
+        float refraction_ratio = rec.frontFace ? (1.0 / rec.mat.refIdx) : rec.mat.refIdx;
+
+        vec3 unit_direction = normalize(r_in.direction);
+        float cos_theta = min(dot(-unit_direction, rec.normal), 1.0);
+        float sin_theta = sqrt(1.0 - cos_theta * cos_theta);
+
+        bool cannot_refract = refraction_ratio * sin_theta > 1.0;
+        vec3 direction;
+
+        // Total Internal Reflection OR Fresnel Reflectance
+        if (cannot_refract || reflectance(cos_theta, refraction_ratio) > random()) {
+            direction = reflect(unit_direction, rec.normal);
+        } else {
+            direction = refractRay(unit_direction, rec.normal, refraction_ratio);
+        }
+
+        scattered = Ray(rec.point, normalize(direction));
+        return true;
+    }
+    return false;
+}
+
+// --- Intersection Functions ---
+
+// Helper: set face normal
+// Ensures the normal always points against the ray direction
+void setFaceNormal(inout HitRecord rec, Ray r, vec3 outward_normal) {
+    rec.frontFace = dot(r.direction, outward_normal) < 0.0;
+    rec.normal = rec.frontFace ? outward_normal : -outward_normal;
+}
+
+bool intersectSphere(Ray r, vec3 center, float radius, Material mat, inout HitRecord rec, float t_min, float t_max) {
+    vec3 oc = r.origin - center;
+    float a = dot(r.direction, r.direction);
+    float half_b = dot(oc, r.direction);
     float c = dot(oc, oc) - radius * radius;
-    float discriminant = b * b - 4.0 * a * c;
+    float discriminant = half_b * half_b - a * c;
+
+    if (discriminant < 0.0) return false;
+    float sqrtd = sqrt(discriminant);
+
+    // Find the nearest root that lies in the acceptable range
+    float root = (-half_b - sqrtd) / a;
+    if (root <= t_min || root >= t_max) {
+        root = (-half_b + sqrtd) / a;
+        if (root <= t_min || root >= t_max)
+            return false;
+    }
+
+    rec.t = root;
+    rec.point = r.origin + rec.t * r.direction;
+    vec3 outward_normal = (rec.point - center) / radius;
+    setFaceNormal(rec, r, outward_normal);
+    rec.mat = mat;
     
-    if (discriminant > 0.0) {
-        float t = (-b - sqrt(discriminant)) / (2.0 * a);
-        if (t > 0.001) {
-            rec.hit = true;
-            rec.t = t;
-            rec.point = ray.origin + t * ray.direction;
-            rec.normal = normalize(rec.point - center);
-            rec.albedo = albedo;
+    return true;
+}
+
+// --- Scene Definition ---
+// Procedurally generates the "Ray Tracing in One Weekend" final scene
+HitRecord intersectWorld(Ray r) {
+    HitRecord closestRec;
+    closestRec.hit = false;
+    float closestT = INFINITY;
+    
+    HitRecord tempRec;
+    
+    // 1. Ground (Huge sphere)
+    Material matGround = Material(MAT_LAMBERTIAN, vec3(0.5, 0.5, 0.5), 0.0, 0.0);
+    if (intersectSphere(r, vec3(0.0, 0.0, -1000.0), 1000.0, matGround, tempRec, EPSILON, closestT)) {
+        closestRec = tempRec;
+        closestRec.hit = true;
+        closestT = tempRec.t;
+    }
+    
+    // 2. Three Main Spheres
+    // Glass Sphere (Center)
+    Material matGlass = Material(MAT_DIELECTRIC, vec3(1.0), 0.0, 1.5);
+    if (intersectSphere(r, vec3(0.0, 0.0, 1.0), 1.0, matGlass, tempRec, EPSILON, closestT)) {
+        closestRec = tempRec;
+        closestRec.hit = true;
+        closestT = tempRec.t;
+    }
+    
+    // Diffuse Sphere (Left)
+    Material matLambert = Material(MAT_LAMBERTIAN, vec3(0.4, 0.2, 0.1), 0.0, 0.0);
+    if (intersectSphere(r, vec3(-3.0, 0.0, 1.0), 1.0, matLambert, tempRec, EPSILON, closestT)) {
+        closestRec = tempRec;
+        closestRec.hit = true;
+        closestT = tempRec.t;
+    }
+    
+    // Metal Sphere (Right)
+    Material matMetal = Material(MAT_METAL, vec3(0.7, 0.6, 0.5), 0.0, 0.0);
+    if (intersectSphere(r, vec3(3.0, 0.0, 1.0), 1.0, matMetal, tempRec, EPSILON, closestT)) {
+        closestRec = tempRec;
+        closestRec.hit = true;
+        closestT = tempRec.t;
+    }
+    
+    // 3. Random Small Spheres (Procedural)
+    // Loop through a grid to generate many spheres without passing arrays
+    for (int a = -11; a < 11; a++) {
+        for (int b = -11; b < 11; b++) {
+            // Use coordinate hashing to create a deterministic "random" seed for this sphere
+            uint objSeed = hash(uint(a + 100) * 19349663u ^ uint(b + 100) * 83492791u);
+            
+            float r1 = float(hash(objSeed)) / 4294967296.0;
+            float r2 = float(hash(objSeed + 13u)) / 4294967296.0;
+            
+            vec3 center = vec3(float(a) + 0.9 * r1, float(b) + 0.9 * r2, 0.2);  // Z is height
+            
+            // Avoid overlapping with the 3 big spheres
+            if (length(center - vec3(3.0, 0.0, 0.2)) > 0.9 && 
+                length(center - vec3(0.0, 0.0, 0.2)) > 0.9 && 
+                length(center - vec3(-3.0, 0.0, 0.2)) > 0.9) {
+                
+                // Determine material based on hash
+                float matChoose = float(hash(objSeed + 7u)) / 4294967296.0;
+                Material sphereMat;
+                
+                if (matChoose < 0.8) {
+                    // Lambertian
+                    vec3 albedo = vec3(
+                        (float(hash(objSeed+1u))/4294967296.0) * (float(hash(objSeed+2u))/4294967296.0),
+                        (float(hash(objSeed+3u))/4294967296.0) * (float(hash(objSeed+4u))/4294967296.0),
+                        (float(hash(objSeed+5u))/4294967296.0) * (float(hash(objSeed+6u))/4294967296.0)
+                    );
+                    sphereMat = Material(MAT_LAMBERTIAN, albedo, 0.0, 0.0);
+                } else if (matChoose < 0.95) {
+                    // Metal
+                    vec3 albedo = vec3(
+                        0.5 * (1.0 + float(hash(objSeed+1u))/4294967296.0),
+                        0.5 * (1.0 + float(hash(objSeed+2u))/4294967296.0),
+                        0.5 * (1.0 + float(hash(objSeed+3u))/4294967296.0)
+                    );
+                    float fuzz = 0.5 * (float(hash(objSeed+4u))/4294967296.0);
+                    sphereMat = Material(MAT_METAL, albedo, fuzz, 0.0);
+                } else {
+                    // Glass
+                    sphereMat = Material(MAT_DIELECTRIC, vec3(1.0), 0.0, 1.5);
+                }
+                
+                if (intersectSphere(r, center, 0.2, sphereMat, tempRec, EPSILON, closestT)) {
+                    closestRec = tempRec;
+                    closestRec.hit = true;
+                    closestT = tempRec.t;
+                }
+            }
         }
     }
     
-    return rec;
+    return closestRec;
 }
 
-// Scene intersection (simple demo scene)
-HitRecord intersectScene(Ray ray) {
-    HitRecord closest;
-    closest.hit = false;
-    closest.t = 1e10;
-    
-    // Ground plane (large sphere)
-    HitRecord ground = intersectSphere(ray, vec3(0.0, 0.0, -1000), 1000.0, vec3(0.5, 0.5, 0.5));
-    if (ground.hit && ground.t < closest.t) {
-        closest = ground;
-    }
-    
-    // Center sphere
-    HitRecord sphere1 = intersectSphere(ray, vec3(-1.45, 0.0, 0.8), 0.8, vec3(0.8, 0.3, 0.3));
-    if (sphere1.hit && sphere1.t < closest.t) {
-        closest = sphere1;
-    }
-    
-    // Left sphere
-    HitRecord sphere2 = intersectSphere(ray, vec3(0.0, 0.0, 0.6), 0.6, vec3(0.3, 0.8, 0.3));
-    if (sphere2.hit && sphere2.t < closest.t) {
-        closest = sphere2;
-    }
-    
-    // Right sphere
-    HitRecord sphere3 = intersectSphere(ray, vec3(1.0, 0.0, 0.4), 0.4, vec3(0.3, 0.3, 0.8));
-    if (sphere3.hit && sphere3.t < closest.t) {
-        closest = sphere3;
-    }
-    
-    return closest;
-}
-
-// Simple sky color
+// Simple Sky Color
 vec3 skyColor(vec3 direction) {
-    float t = 0.5 * (direction.z + 1.0);
-    return mix(vec3(1.0, 1.0, 1.0), vec3(0.5, 0.7, 1.0), t) * 1.5; // Brighter sky
+    vec3 unit_dir = normalize(direction);
+    float t = 0.5 * (unit_dir.z + 1.0);  // Z is up
+    return mix(vec3(1.0, 1.0, 1.0), vec3(0.3, 0.5, 1.0), t);
 }
 
-// Ray trace a single ray
-vec3 trace(Ray ray) {
-    vec3 color = vec3(1.0);
+// Ray Tracing Function
+vec3 rayColor(Ray r) {
+    vec3 accumColor = vec3(1.0);
+    Ray curRay = r;
     
     for (int bounce = 0; bounce < maxBounces; bounce++) {
-        HitRecord hit = intersectScene(ray);
+        HitRecord rec = intersectWorld(curRay);
         
-        if (hit.hit) {
-            // Lambertian diffuse
-            vec3 randomDir = randomInUnitSphere();
-            vec3 target = hit.point + hit.normal + randomDir;
-            vec3 newDir = target - hit.point;
-            
-            // Ensure direction is valid
-            float dirLength = length(newDir);
-            if (dirLength < 0.001) {
-                // Degenerate direction, use normal instead
-                newDir = hit.normal;
+        if (rec.hit) {
+            Ray scattered;
+            vec3 attenuation;
+            if (scatter(curRay, rec, attenuation, scattered)) {
+                accumColor *= attenuation;
+                curRay = scattered;
+                
+                // Russian Roulette could be added here for optimization
             } else {
-                newDir = normalize(newDir);
-            }
-            
-            ray.origin = hit.point + hit.normal * 0.001; // Offset to avoid self-intersection
-            ray.direction = newDir;
-            color *= hit.albedo;
-            
-            // Prevent color from becoming too dark or invalid
-            if (dot(color, color) < 0.001) {
-                return vec3(0.0);
+                return vec3(0.0); // Absorbed
             }
         } else {
-            // Hit sky
-            color *= skyColor(ray.direction);
-            break;
+            // Hit Sky
+            accumColor *= skyColor(curRay.direction);
+            return accumColor;
         }
     }
-    
-    return color;
+    // Exceeded max bounces
+    return vec3(0.0);
 }
 
 void main() {
     ivec2 pixelCoords = ivec2(gl_GlobalInvocationID.xy);
-    
-    // Check bounds
-    if (pixelCoords.x >= int(iResolution.x) || pixelCoords.y >= int(iResolution.y)) {
-        return;
-    }
-    
-    // Initialize random seed
+    if (pixelCoords.x >= int(iResolution.x) || pixelCoords.y >= int(iResolution.y)) return;
+
+    // Initialize Random Seed
     seed = hash(uint(pixelCoords.x) + uint(pixelCoords.y) * uint(iResolution.x) + uint(iFrame) * 719393u);
-    
-    // Generate ray from camera
-    // Convert pixel coordinates to NDC space [-1, 1]
-    vec2 uv = (vec2(pixelCoords) + vec2(random(), random())) / iResolution.xy;
-    uv = uv * 2.0 - 1.0;  // Map from [0,1] to [-1,1]
-    
-    // Calculate aspect ratio
+
+    // Calculate FOV Parameters
     float aspect = iResolution.x / iResolution.y;
-    
-    // Calculate FOV scale
     float fovRadians = radians(cameraFov);
     float halfHeight = tan(fovRadians * 0.5);
     float halfWidth = aspect * halfHeight;
     
-    // Calculate ray direction in camera space
-    vec3 rayDir = normalize(
-        cameraFront + 
-        uv.x * halfWidth * cameraRight + 
-        uv.y * halfHeight * cameraUp
-    );
-    
-    Ray ray;
-    ray.origin = cameraPosition;
-    ray.direction = rayDir;
-    
-    // Trace rays (multi-sampling)
     vec3 color = vec3(0.0);
-    for (int i = 0; i < samplesPerPixel; i++) {
-        color += trace(ray);
+
+    // Multi-sampling Loop
+    for (int s = 0; s < samplesPerPixel; s++) {
+        // Pixel Jitter for Anti-Aliasing
+        float u_offset = random();
+        float v_offset = random();
+        
+        // Convert to UV [-1, 1]
+        vec2 uv = (vec2(pixelCoords) + vec2(u_offset, v_offset)) / iResolution.xy;
+        uv = uv * 2.0 - 1.0; 
+        
+        // --- Camera Logic ---
+        // Using CPU-provided uniforms directly (as requested)
+        // Ensure cameraRight and cameraUp are orthogonal to cameraFront on CPU side!
+        vec3 rayDir = normalize(
+            cameraFront + 
+            uv.x * halfWidth * cameraRight + 
+            uv.y * halfHeight * cameraUp
+        );
+
+        Ray r;
+        r.origin = cameraPosition;
+        r.direction = rayDir;
+        
+        color += rayColor(r);
     }
+    
     color /= float(samplesPerPixel);
     
-    // Clamp to prevent invalid values
-    color = clamp(color, 0.0, 10.0);
+    // Clamp to prevent NaNs/Infs
+    color = clamp(color, 0.0, 100.0);
     
-    // Gamma correction
-    color = pow(color, vec3(1.0 / 2.2));
+    // --- Temporal Accumulation ---
+    // If this is the first frame, use the new color directly, otherwise blend
+    if (iFrame > 0) {
+        vec4 prevAccum = imageLoad(accumulationImage, pixelCoords);
+        float weight = 1.0 / float(iFrame + 1);
+        color = mix(prevAccum.rgb, color, weight);
+    }
     
-    // Final clamp
-    color = clamp(color, 0.0, 1.0);
+    // Store Accumulation Buffer
+    imageStore(accumulationImage, pixelCoords, vec4(color, 1.0));
+
+    // --- Gamma Correction ---
+    // Linear to sRGB (Approximate with sqrt)
+    vec3 displayColor = sqrt(color);
+    displayColor = clamp(displayColor, 0.0, 1.0);
     
-    // Write to output texture
-    imageStore(outputImage, pixelCoords, vec4(color, 1.0));
+    imageStore(outputImage, pixelCoords, vec4(displayColor, 1.0));
 }

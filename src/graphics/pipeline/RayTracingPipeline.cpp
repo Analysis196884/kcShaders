@@ -28,6 +28,10 @@ RayTracingPipeline::RayTracingPipeline(GLuint fbo, GLuint vao, int width, int he
     , width_(width)
     , height_(height)
     , outputTexture_(0)
+    , accumulationTexture_(0)
+    , lastCameraPosition_(0.0f)
+    , lastCameraFront_(0.0f, 1.0f, 0.0f)
+    , cameraMovedThisFrame_(false)
     , computeShaderProgram_(0)
     , vertexBuffer_(0)
     , triangleBuffer_(0)
@@ -63,21 +67,40 @@ void RayTracingPipeline::createOutputTexture()
         deleteOutputTexture();
     }
     
+    // Create output texture
     glGenTextures(1, &outputTexture_);
-    CheckGLError("glGenTextures");
+    CheckGLError("glGenTextures output");
     
     glBindTexture(GL_TEXTURE_2D, outputTexture_);
-    CheckGLError("glBindTexture");
+    CheckGLError("glBindTexture output");
     
     // RGBA32F for HDR rendering
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, width_, height_, 0, GL_RGBA, GL_FLOAT, nullptr);
-    CheckGLError("glTexImage2D");
+    CheckGLError("glTexImage2D output");
     
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    CheckGLError("glTexParameteri");
+    CheckGLError("glTexParameteri output");
+    
+    glBindTexture(GL_TEXTURE_2D, 0);
+    
+    // Create accumulation texture
+    glGenTextures(1, &accumulationTexture_);
+    CheckGLError("glGenTextures accumulation");
+    
+    glBindTexture(GL_TEXTURE_2D, accumulationTexture_);
+    CheckGLError("glBindTexture accumulation");
+    
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, width_, height_, 0, GL_RGBA, GL_FLOAT, nullptr);
+    CheckGLError("glTexImage2D accumulation");
+    
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    CheckGLError("glTexParameteri accumulation");
     
     glBindTexture(GL_TEXTURE_2D, 0);
 }
@@ -87,6 +110,10 @@ void RayTracingPipeline::deleteOutputTexture()
     if (outputTexture_ != 0) {
         glDeleteTextures(1, &outputTexture_);
         outputTexture_ = 0;
+    }
+    if (accumulationTexture_ != 0) {
+        glDeleteTextures(1, &accumulationTexture_);
+        accumulationTexture_ = 0;
     }
 }
 
@@ -185,13 +212,34 @@ void RayTracingPipeline::execute(RenderContext& ctx)
         return;
     }
     
+    // Detect camera movement
+    cameraMovedThisFrame_ = false;
+    if (ctx.camera) {
+        glm::vec3 camPos = ctx.camera->GetPosition();
+        glm::vec3 camFront = ctx.camera->GetFront();
+        
+        float posDelta = glm::length(camPos - lastCameraPosition_);
+        float frontDelta = glm::length(camFront - lastCameraFront_);
+        
+        if (posDelta > 0.0001f || frontDelta > 0.0001f) {
+            cameraMovedThisFrame_ = true;
+            frameCount_ = 0;  // Reset accumulation
+            lastCameraPosition_ = camPos;
+            lastCameraFront_ = camFront;
+        }
+    }
+    
     // === Step 1: Run compute shader for ray tracing ===
     glUseProgram(computeShaderProgram_);
     CheckGLError("glUseProgram(compute)");
     
     // Bind output texture as image for compute shader write
     glBindImageTexture(0, outputTexture_, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
-    CheckGLError("glBindImageTexture");
+    CheckGLError("glBindImageTexture output");
+    
+    // Bind accumulation texture for read/write
+    glBindImageTexture(1, accumulationTexture_, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32F);
+    CheckGLError("glBindImageTexture accumulation");
     
     // Set uniforms manually for compute shader
     GLint loc;
@@ -210,9 +258,12 @@ void RayTracingPipeline::execute(RenderContext& ctx)
     
     loc = glGetUniformLocation(computeShaderProgram_, "iFrame");
     if (loc >= 0) {
-        glUniform1i(loc, frameCount_++);
+        glUniform1i(loc, frameCount_);
         CheckGLError("iFrame");
     }
+    
+    // Increment frame count after setting uniform
+    frameCount_++;
     
     loc = glGetUniformLocation(computeShaderProgram_, "maxBounces");
     if (loc >= 0) {
@@ -455,9 +506,16 @@ void RayTracingPipeline::uploadScene(Scene* scene)
             
             // Transform normal to world space
             if (i < mesh->GetVertexCount()) {
-                gpuVert.normal = glm::normalize(normalMatrix * mesh->GetVertex(i).normal);
+                glm::vec3 normal = mesh->GetVertex(i).normal;
+                // Ensure input normal is normalized
+                if (glm::length(normal) > 0.001f) {
+                    gpuVert.normal = glm::normalize(normalMatrix * normal);
+                } else {
+                    // Fallback to up vector if normal is zero
+                    gpuVert.normal = glm::vec3(0.0f, 0.0f, 1.0f);
+                }
             } else {
-                gpuVert.normal = glm::vec3(0.0f, 1.0f, 0.0f);
+                gpuVert.normal = glm::vec3(0.0f, 0.0f, 1.0f);
             }
             gpuVert._pad1 = 0.0f;
             

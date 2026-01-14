@@ -80,6 +80,12 @@ private:
     
     // Output texture from compute shader
     GLuint outputTexture_;
+    GLuint accumulationTexture_;  // Temporal accumulation texture
+    
+    // Camera state for detecting changes
+    glm::vec3 lastCameraPosition_;
+    glm::vec3 lastCameraFront_;
+    bool cameraMovedThisFrame_;
     
     // Scene data SSBOs
     GLuint vertexBuffer_;

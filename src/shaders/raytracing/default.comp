@@ -2,6 +2,7 @@
 
 layout(local_size_x = 16, local_size_y = 16) in;
 layout(rgba32f, binding = 0) uniform image2D outputImage;
+layout(rgba32f, binding = 1) uniform image2D accumulationImage;  // Temporal accumulation
 
 // Uniforms
 uniform vec3 iResolution;
@@ -85,10 +86,32 @@ float random() {
 }
 
 vec3 randomInUnitSphere() {
-    float theta = random() * 2.0 * 3.14159265;
-    float phi = acos(2.0 * random() - 1.0);
-    float r = pow(random(), 1.0/3.0);
-    return r * vec3(sin(phi) * cos(theta), sin(phi) * sin(theta), cos(phi));
+    vec3 p;
+    do {
+        p = 2.0 * vec3(random(), random(), random()) - vec3(1.0);
+    } while (length(p) >= 1.0);
+    return p;
+}
+
+vec3 sampleHemisphereCosine(vec3 N) {
+    float r1 = random();
+    float r2 = random();
+
+    float PI = 3.14159;
+    float phi = 2.0 * PI * r1;
+    float r = sqrt(r2);
+
+    vec3 local = vec3(
+        r * cos(phi),
+        r * sin(phi),
+        sqrt(1.0 - r2)
+    );
+
+    // transform to world space (TBN)
+    vec3 T = normalize(cross(abs(N.y) < 0.99 ? vec3(0,1,0) : vec3(1,0,0), N));
+    vec3 B = cross(N, T);
+
+    return normalize(local.x * T + local.y * B + local.z * N);
 }
 
 // Ray structure
@@ -118,8 +141,31 @@ bool intersectAABB(Ray ray, vec3 boundsMin, vec3 boundsMax) {
     return tenter <= texit && texit > 0.001;
 }
 
+// Helper: Interpolate and fix normal orientation
+vec3 interpolateNormal(vec3 n0, vec3 n1, vec3 n2, float u, float v, vec3 rayDir) {
+    float w = 1.0 - u - v;
+    vec3 normal = w * n0 + u * n1 + v * n2;
+    
+    // Normalize (important for interpolated normals)
+    float len = length(normal);
+    if (len > 0.001) {
+        normal = normal / len;
+    } else {
+        // Fallback to geometric normal if interpolation failed
+        return normalize(cross(n1 - n0, n2 - n0));
+    }
+    
+    // Ensure normal faces the ray (flip if back-facing)
+    if (dot(normal, rayDir) > 0.0) {
+        normal = -normal;
+    }
+    
+    return normal;
+}
+
 // Ray-Triangle intersection (Möller–Trumbore)
-bool intersectTriangle(Ray ray, vec3 v0, vec3 v1, vec3 v2, out float t, out vec3 normal) {
+// Returns barycentric coordinates for normal interpolation
+bool intersectTriangle(Ray ray, vec3 v0, vec3 v1, vec3 v2, out float t, out float u, out float v) {
     vec3 e1 = v1 - v0;
     vec3 e2 = v2 - v0;
     vec3 p = cross(ray.direction, e2);
@@ -129,20 +175,15 @@ bool intersectTriangle(Ray ray, vec3 v0, vec3 v1, vec3 v2, out float t, out vec3
     
     float invDet = 1.0 / det;
     vec3 s = ray.origin - v0;
-    float u = dot(s, p) * invDet;
+    u = dot(s, p) * invDet;
     if (u < 0.0 || u > 1.0) return false;
     
     vec3 q = cross(s, e1);
-    float v = dot(ray.direction, q) * invDet;
+    v = dot(ray.direction, q) * invDet;
     if (v < 0.0 || u + v > 1.0) return false;
     
     t = dot(e2, q) * invDet;
     if (t < 0.001) return false;
-    
-    normal = normalize(cross(e1, e2));
-    if (dot(normal, ray.direction) > 0.0) {
-        normal = -normal;  // Flip if back-facing
-    }
     
     return true;
 }
@@ -171,17 +212,27 @@ HitRecord intersectBVH(Ray ray) {
             // Leaf node - test triangles
             for (uint i = 0; i < node.triCount; i++) {
                 GpuTriangle tri = triangles[node.leftFirst + i];
+                
+                // Get vertex positions
                 vec3 v0 = vertices[tri.v0].position;
                 vec3 v1 = vertices[tri.v1].position;
                 vec3 v2 = vertices[tri.v2].position;
                 
-                float t;
-                vec3 normal;
-                if (intersectTriangle(ray, v0, v1, v2, t, normal) && t < closest.t) {
+                // Test intersection and get barycentric coordinates
+                float t, u, v;
+                if (intersectTriangle(ray, v0, v1, v2, t, u, v) && t < closest.t) {
+                    // Get vertex normals
+                    vec3 n0 = vertices[tri.v0].normal;
+                    vec3 n1 = vertices[tri.v1].normal;
+                    vec3 n2 = vertices[tri.v2].normal;
+                    
+                    // Interpolate normal using barycentric coordinates and ensure proper orientation
+                    vec3 interpolatedNormal = interpolateNormal(n0, n1, n2, u, v, ray.direction);
+                    
                     closest.hit = true;
                     closest.t = t;
                     closest.point = ray.origin + t * ray.direction;
-                    closest.normal = normal;
+                    closest.normal = interpolatedNormal;
                     closest.materialId = tri.materialId;
                 }
             }
@@ -224,11 +275,11 @@ vec3 trace(Ray ray) {
             vec3 scatter;
             if (mat.metallic > 0.5) {
                 // Metallic - reflection
-                vec3 reflected = reflect(ray.direction, hit.normal);
+                vec3 reflected = reflect(normalize(ray.direction), hit.normal);
                 scatter = normalize(reflected + mat.roughness * randomInUnitSphere());
             } else {
-                // Dielectric - diffuse
-                scatter = normalize(hit.normal + randomInUnitSphere());
+                // Dielectric - diffuse (Lambertian)
+                scatter = sampleHemisphereCosine(hit.normal);
             }
             
             // Ensure valid direction
@@ -297,10 +348,21 @@ void main() {
     }
     color /= float(samplesPerPixel);
     
-    // Gamma correction
-    color = pow(color, vec3(1.0 / 2.2));  // Gamma correction
-    color = clamp(color, 0.0, 1.0);
+    // Temporal accumulation
+    vec4 prevAccum = imageLoad(accumulationImage, pixelCoords);
+    
+    // Mix with previous accumulation
+    // frameCount starts at 0 when camera moves, so we add 1
+    float weight = 1.0 / float(iFrame + 1);
+    vec3 accumColor = mix(prevAccum.rgb, color, weight);
+    
+    // Store accumulated result
+    imageStore(accumulationImage, pixelCoords, vec4(accumColor, 1.0));
+    
+    // Apply gamma correction for display
+    vec3 displayColor = pow(accumColor, vec3(1.0 / 2.2));
+    displayColor = clamp(displayColor, 0.0, 1.0);
     
     // Write to output texture
-    imageStore(outputImage, pixelCoords, vec4(color, 1.0));
+    imageStore(outputImage, pixelCoords, vec4(displayColor, 1.0));
 }
