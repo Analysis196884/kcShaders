@@ -21,7 +21,7 @@ inline Scene* create_demo_scene()
 
     // Create a root node with a plane mesh (rough plastic material)
     SceneNode* plane_node = scene->createRoot();
-    plane_node->mesh = create_plane(10.0f, 10.0f, 10, 10);
+    plane_node->mesh = create_plane(10.0f, 10.0f, 1, 1);
     plane_node->transform.position = glm::vec3(0.0f, 0.0f, -1.0f);
     plane_node->material = Material::CreatePlastic(glm::vec3(0.3f, 0.5f, 0.8f), 0.7f); // Blue plastic
     plane_node->material->name = "Blue Plastic";

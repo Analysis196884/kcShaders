@@ -77,7 +77,7 @@ float distributionGGX(vec3 N, vec3 H, float roughness)
     float denom = (NdotH2 * (a2 - 1.0) + 1.0);
     denom = PI * denom * denom;
     
-    return nom / max(denom, 0.0000001);
+    return nom / max(denom, 0.0001);
 }
 
 // Geometry function (Schlick-GGX)
@@ -89,7 +89,7 @@ float geometrySchlickGGX(float NdotV, float roughness)
     float nom = NdotV;
     float denom = NdotV * (1.0 - k) + k;
     
-    return nom / max(denom, 0.0000001);
+    return nom / max(denom, 0.0001);
 }
 
 float geometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
@@ -125,7 +125,7 @@ vec3 calculatePBR(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 albedo, float meta
     
     vec3 numerator = NDF * G * F;
     float denominator = 4.0 * NdotV * NdotL;
-    vec3 specular = numerator / max(denominator, 0.001);
+    vec3 specular = numerator / max(denominator, 0.0001);
     
     return (kD * albedo / PI + specular) * radiance * max(NdotL, 0.0);
 }
@@ -203,6 +203,9 @@ void main()
         float c = max(pointLights[i].constant, 0.0001);
         float l = max(pointLights[i].linear, 0.0);
         float q = max(pointLights[i].quadratic, 0.0);
+        // c *= 0.01;
+        // l *= 0.01;
+        // q *= 0.001;
         float attenuation = 1.0 / (c + l * dist + q * dist * dist);
 
         // Smooth radius falloff like forward shader

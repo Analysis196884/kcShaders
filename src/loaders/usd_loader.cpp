@@ -268,7 +268,7 @@ bool UsdLoader::ProcessPrim(void* primPtr, SceneNode* parentNode, Scene* scene) 
         
         parentNode->transform.position = position;
         parentNode->transform.scale = scale;
-        parentNode->transform.rotation = glm::degrees(glm::eulerAngles(rotation));
+        parentNode->transform.rotation = rotation;  // Store as quaternion directly
     }
 
     // Handle mesh geometry - attach directly to this node
