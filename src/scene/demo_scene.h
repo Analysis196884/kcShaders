@@ -35,7 +35,7 @@ inline Scene* create_demo_scene()
     // Key point light (warm, above the scene)
     PointLight* keyLight = PointLight::CreateBulb(glm::vec3(-2.0f, -2.0f, 3.0f), glm::vec3(1.0f, 0.9f, 0.7f), 15.0f);
     keyLight->name = "Key Light";
-    keyLight->intensity = 2.0f;
+    keyLight->intensity = 1.0f;
     scene->addLight(keyLight);
     
     // Fill light (cool, side)

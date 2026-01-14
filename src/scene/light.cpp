@@ -69,8 +69,8 @@ PointLight* PointLight::CreateBulb(const glm::vec3& pos, const glm::vec3& color,
     
     // Adjust attenuation based on radius
     light->constant = 1.0f;
-    light->linear = 0.09f;
-    light->quadratic = 0.032f;
+    light->linear = 0.9f;
+    light->quadratic = 0.32f;
     
     return light;
 }

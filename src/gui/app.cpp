@@ -68,14 +68,14 @@ App::App(const std::string& title)
     , camera_speed_(5.0f)
 {
     // Initialize shader path arrays to empty strings
-    strncpy_s(vertex_shader_path_, "../../src/shaders/default.vert", sizeof(vertex_shader_path_) - 1);
-    strncpy_s(fragment_shader_path_, "../../src/shaders/default.frag", sizeof(fragment_shader_path_) - 1);
+    strncpy_s(forward_vert_shader_path, "../../src/shaders/forward/default.vert", sizeof(forward_vert_shader_path) - 1);
+    strncpy_s(forward_frag_shader_path_, "../../src/shaders/fowrard/default.frag", sizeof(forward_frag_shader_path_) - 1);
     
     // Initialize deferred rendering shader paths with defaults
-    strncpy_s(geom_vert_shader_path_, "../../src/shaders/deferred_geometry.vert", sizeof(geom_vert_shader_path_) - 1);
-    strncpy_s(geom_frag_shader_path_, "../../src/shaders/deferred_geometry.frag", sizeof(geom_frag_shader_path_) - 1);
-    strncpy_s(light_vert_shader_path_, "../../src/shaders/deferred_lighting.vert", sizeof(light_vert_shader_path_) - 1);
-    strncpy_s(light_frag_shader_path_, "../../src/shaders/deferred_lighting.frag", sizeof(light_frag_shader_path_) - 1);
+    strncpy_s(geom_vert_shader_path_, "../../src/shaders/deferred/geometry.vert", sizeof(geom_vert_shader_path_) - 1);
+    strncpy_s(geom_frag_shader_path_, "../../src/shaders/deferred/geometry.frag", sizeof(geom_frag_shader_path_) - 1);
+    strncpy_s(light_vert_shader_path_, "../../src/shaders/deferred/lighting.vert", sizeof(light_vert_shader_path_) - 1);
+    strncpy_s(light_frag_shader_path_, "../../src/shaders/deferred/lighting.frag", sizeof(light_frag_shader_path_) - 1);
     
     // Initialize shadertoy shader paths with defaults
     strncpy_s(shadertoy_vert_shader_path_, "../../src/shaders/shadertoy/default.vert", sizeof(shadertoy_vert_shader_path_) - 1);
@@ -632,7 +632,7 @@ void App::RenderControlPanel()
         switch (render_mode_) {
             case RenderMode::ForwardRendering:
                 std::cout << "Switched to Forward Rendering mode\n";
-                if (!renderer_->loadForwardShaders(vertex_shader_path_, fragment_shader_path_)) {
+                if (!renderer_->loadForwardShaders(forward_vert_shader_path, forward_frag_shader_path_)) {
                     std::cerr << "Failed to load forward shaders\n";
                 }
                 break;
@@ -671,6 +671,13 @@ void App::RenderControlPanel()
     
     // Show current mode info
     ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Active: %s", render_modes[current_mode]);
+
+    if (render_mode_ == RenderMode::RayTracing) {
+        // Set ray tracing specific parameters here
+        ImGui::SliderInt("Max Bounces", &raytracing_params.max_bounces, 1, 8);
+        ImGui::SliderInt("Samples per Pixel", &raytracing_params.samples_per_pixel, 1, 32);
+        renderer_->setRayTracingParameters(raytracing_params.max_bounces, raytracing_params.samples_per_pixel);
+    }
 
     // Camera info and controls
     if (camera_) {
@@ -724,12 +731,12 @@ void App::RenderShaderEditorPanel()
     // Vertex shader path input
     ImGui::Text("Vertex Shader:");
     ImGui::SameLine();
-    ImGui::InputText("##VertexShader", vertex_shader_path_, sizeof(vertex_shader_path_));
+    ImGui::InputText("##VertexShader", forward_vert_shader_path, sizeof(forward_vert_shader_path));
     
     // Fragment shader path input
     ImGui::Text("Fragment Shader:");
     ImGui::SameLine();
-    ImGui::InputText("##FragmentShader", fragment_shader_path_, sizeof(fragment_shader_path_));
+    ImGui::InputText("##FragmentShader", forward_frag_shader_path_, sizeof(forward_frag_shader_path_));
     
     ImGui::Spacing();
     ImGui::Spacing();
@@ -1025,8 +1032,8 @@ void App::LoadConfig()
         };
 
         ShaderConfigEntry entries[] = {
-            { "forward_vert_shader=",      vertex_shader_path_,             sizeof(vertex_shader_path_) },
-            { "forward_frag_shader=",      fragment_shader_path_,           sizeof(fragment_shader_path_) },
+            { "forward_vert_shader=",      forward_vert_shader_path,             sizeof(forward_vert_shader_path) },
+            { "forward_frag_shader=",      forward_frag_shader_path_,           sizeof(forward_frag_shader_path_) },
             { "geom_vert_shader=",         geom_vert_shader_path_,           sizeof(geom_vert_shader_path_) },
             { "geom_frag_shader=",         geom_frag_shader_path_,           sizeof(geom_frag_shader_path_) },
             { "light_vert_shader=",        light_vert_shader_path_,          sizeof(light_vert_shader_path_) },
@@ -1061,13 +1068,13 @@ void App::SaveConfig()
 {
     std::ofstream config_file("shader_config.ini");
     if (config_file.is_open()) {
-        config_file << "forward_vert_shader=" << vertex_shader_path_ << "\n";
-        config_file << "forward_frag_shader=" << fragment_shader_path_ << "\n";
+        config_file << "forward_vert_shader=" << forward_vert_shader_path << "\n";
+        config_file << "forward_frag_shader=" << forward_frag_shader_path_ << "\n";
         config_file << "geom_vert_shader=" << geom_vert_shader_path_ << "\n";
         config_file << "geom_frag_shader=" << geom_frag_shader_path_ << "\n";
         config_file << "light_vert_shader=" << light_vert_shader_path_ << "\n";
         config_file << "light_frag_shader=" << light_frag_shader_path_ << "\n";
-        config_file << "shadertoy_vertex_shader=" << shadertoy_vert_shader_path_ << "\n";
+        config_file << "shadertoy_vert_shader=" << shadertoy_vert_shader_path_ << "\n";
         config_file << "shadertoy_frag_shader=" << shadertoy_frag_shader_path_ << "\n";
         config_file << "raytracing_compute_shader=" << raytracing_compute_shader_path_ << "\n";
         config_file.close();
@@ -1089,8 +1096,8 @@ void App::CheckShaderFileChanges()
     
     switch (render_mode_) {
         case RenderMode::ForwardRendering: {
-            std::string vertex_path(vertex_shader_path_);
-            std::string fragment_path(fragment_shader_path_);
+            std::string vertex_path(forward_vert_shader_path);
+            std::string fragment_path(forward_frag_shader_path_);
             
             if (vertex_path.empty() && fragment_path.empty()) {
                 return;

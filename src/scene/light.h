@@ -67,8 +67,8 @@ public:
     
     // Attenuation parameters (distance falloff)
     float constant = 1.0f;                    // Constant attenuation
-    float linear = 0.09f;                     // Linear attenuation
-    float quadratic = 0.032f;                 // Quadratic attenuation
+    float linear = 0.9f;                     // Linear attenuation
+    float quadratic = 0.32f;                 // Quadratic attenuation
     float radius = 10.0f;                     // Maximum effective radius
     
     float GetAttenuation(float distance) const override;

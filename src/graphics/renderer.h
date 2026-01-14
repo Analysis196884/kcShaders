@@ -47,13 +47,16 @@ class Renderer {
     // Unified shader loading interface
     bool loadForwardShaders(const std::string& vertex_path, const std::string& fragment_path);
     bool loadDeferredShaders(
-        const std::string& geom_vert = "../../src/shaders/deferred_geometry.vert",
-        const std::string& geom_frag = "../../src/shaders/deferred_geometry.frag",
-        const std::string& light_vert = "../../src/shaders/deferred_lighting.vert",
-        const std::string& light_frag = "../../src/shaders/deferred_lighting.frag"
+        const std::string& geom_vert = "../../src/shaders/deferred/geometry.vert",
+        const std::string& geom_frag = "../../src/shaders/deferred/geometry.frag",
+        const std::string& light_vert = "../../src/shaders/deferred/lighting.vert",
+        const std::string& light_frag = "../../src/shaders/deferred/lighting.frag"
     );
     bool loadShadertoyShaders(const std::string& vertex_path, const std::string& fragment_path);
     bool loadRayTracingShaders(const std::string& compute_path, const std::string& display_vert, const std::string& display_frag);
+
+    // API for setting parameters of rendering pipelines
+    void setRayTracingParameters(int max_bounces, int samples_per_pixel);
 
   private:
     void create_framebuffer();

@@ -514,4 +514,15 @@ void Renderer::uploadRayTracingScene(Scene* scene)
     raytracingPipeline_->uploadScene(scene);
 }
 
+void Renderer::setRayTracingParameters(int max_bounces, int samples_per_pixel)
+{
+    if (!raytracingPipeline_) {
+        std::cerr << "[Renderer] Ray tracing pipeline not initialized\n";
+        return;
+    }
+    
+    raytracingPipeline_->setMaxBounces(max_bounces);
+    raytracingPipeline_->setSamplesPerPixel(samples_per_pixel);
+}
+
 } // namespace kcShaders

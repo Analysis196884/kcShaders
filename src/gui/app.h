@@ -107,8 +107,8 @@ private:
     RenderMode render_mode_;
     
     // Shader paths
-    char vertex_shader_path_[256];
-    char fragment_shader_path_[256];
+    char forward_vert_shader_path[256];
+    char forward_frag_shader_path_[256];
     
     // Deferred rendering shader paths
     char geom_vert_shader_path_[256];
@@ -143,6 +143,12 @@ private:
     time_t last_raytracing_compute_mod_time_;
     time_t last_raytracing_display_vert_mod_time_;
     time_t last_raytracing_display_frag_mod_time_;
+
+    // Rendering parameters
+    struct {
+        int max_bounces = 4;
+        int samples_per_pixel = 1;
+    } raytracing_params;
     
     float shader_check_timer_;
     
