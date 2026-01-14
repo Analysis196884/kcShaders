@@ -203,9 +203,6 @@ void main()
         float c = max(pointLights[i].constant, 0.0001);
         float l = max(pointLights[i].linear, 0.0);
         float q = max(pointLights[i].quadratic, 0.0);
-        // c *= 0.01;
-        // l *= 0.01;
-        // q *= 0.001;
         float attenuation = 1.0 / (c + l * dist + q * dist * dist);
 
         // Smooth radius falloff like forward shader

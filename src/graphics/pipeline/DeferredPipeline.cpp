@@ -45,21 +45,26 @@ bool DeferredPipeline::loadShaders(
     std::cout << "  Geometry: " << geomVert << " + " << geomFrag << "\n";
     std::cout << "  Lighting: " << lightVert << " + " << lightFrag << "\n";
     
-    // Create geometry shader
-    geometryShader_ = std::make_unique<ShaderProgram>();
-    if (!geometryShader_->loadFromFiles(geomVert, geomFrag)) {
+    // Create temporary shader objects
+    auto tempGeometryShader = std::make_unique<ShaderProgram>();
+    if (!tempGeometryShader->loadFromFiles(geomVert, geomFrag)) {
         std::cerr << "[DeferredPipeline] Failed to load geometry shader\n";
+        // Keep old shaders if they exist, don't update anything
         return false;
     }
     
-    // Create lighting shader
-    lightingShader_ = std::make_unique<ShaderProgram>();
-    if (!lightingShader_->loadFromFiles(lightVert, lightFrag)) {
+    auto tempLightingShader = std::make_unique<ShaderProgram>();
+    if (!tempLightingShader->loadFromFiles(lightVert, lightFrag)) {
         std::cerr << "[DeferredPipeline] Failed to load lighting shader\n";
+        // Keep old shaders if they exist, don't update anything
         return false;
     }
     
-    // Create passes
+    // Only update if both shaders loaded successfully
+    geometryShader_ = std::move(tempGeometryShader);
+    lightingShader_ = std::move(tempLightingShader);
+    
+    // Create passes with the new valid shaders
     auto gbufferPass = std::make_unique<GBufferPass>(gbuffer_, geometryShader_.get());
     auto lightingPass = std::make_unique<LightingPass>(
         gbuffer_,
@@ -90,9 +95,23 @@ void DeferredPipeline::execute(RenderContext& ctx)
         return;
     }
     
+    // Safety check: ensure shaders are loaded
+    if (!geometryShader_ || !lightingShader_) {
+        std::cerr << "[DeferredPipeline] Shaders not loaded, cannot execute\n";
+        return;
+    }
+    
+    // Safety check: ensure passes are created
+    if (passes_.empty()) {
+        std::cerr << "[DeferredPipeline] No render passes configured\n";
+        return;
+    }
+    
     // Execute all passes in sequence
     for (auto& pass : passes_) {
-        pass->execute(ctx);
+        if (pass) {  // Check pass pointer is valid
+            pass->execute(ctx);
+        }
     }
 }
 
