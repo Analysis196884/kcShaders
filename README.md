@@ -16,8 +16,8 @@ USD scene loading and rendering:
 - Material and texture support
 
 ## Requirements
-- OpenGL 4.5 or higher
-- OpenUSD SKD
+- OpenGL 4.3 or higher
+- [OpenUSD SDK](https://developer.nvidia.cn/openusd)
 
 ## Building
 ```bash
