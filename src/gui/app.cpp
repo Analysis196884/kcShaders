@@ -678,6 +678,17 @@ void App::RenderControlPanel()
         ImGui::SliderInt("Samples per Pixel", &raytracing_params.samples_per_pixel, 1, 32);
         renderer_->setRayTracingParameters(raytracing_params.max_bounces, raytracing_params.samples_per_pixel);
     }
+    
+    // Deferred rendering post-processing options
+    if (render_mode_ == RenderMode::DeferredRendering) {
+        ImGui::Spacing();
+        ImGui::Text("Post-Processing");
+        ImGui::Separator();
+        
+        if (ImGui::Checkbox("Enable SSAO", &ssao_enabled_)) {
+            renderer_->enableDeferredSSAO(ssao_enabled_);
+        }
+    }
 
     // Camera info and controls
     if (camera_) {

@@ -11,6 +11,7 @@ class GBuffer;
 class ShaderProgram;
 class GBufferPass;
 class LightingPass;
+class SSAOPass;
 
 /**
  * @brief Deferred rendering pipeline
@@ -44,8 +45,24 @@ public:
         const std::string& geomVert,
         const std::string& geomFrag,
         const std::string& lightVert,
-        const std::string& lightFrag
+        const std::string& lightFrag,
+        const std::string& ssaoVert = "",
+        const std::string& ssaoFrag = "",
+        const std::string& ssaoBlurVert = "",
+        const std::string& ssaoBlurFrag = ""
     );
+    
+    /**
+     * @brief Enable or disable SSAO
+     * @param enable Whether to enable SSAO
+     */
+    void enableSSAO(bool enable);
+    
+    /**
+     * @brief Check if SSAO is enabled
+     * @return true if SSAO is enabled
+     */
+    bool isSSAOEnabled() const { return ssaoEnabled_; }
 
 private:
     GBuffer* gbuffer_;
@@ -56,9 +73,14 @@ private:
     
     std::unique_ptr<ShaderProgram> geometryShader_;
     std::unique_ptr<ShaderProgram> lightingShader_;
+    std::unique_ptr<ShaderProgram> ssaoShader_;
+    std::unique_ptr<ShaderProgram> ssaoBlurShader_;
     
     GBufferPass* gbufferPass_;      // Non-owning pointer (owned by passes_)
     LightingPass* lightingPass_;    // Non-owning pointer (owned by passes_)
+    SSAOPass* ssaoPass_;            // Non-owning pointer (owned by passes_)
+    
+    bool ssaoEnabled_ = false;
 };
 
 } // namespace kcShaders

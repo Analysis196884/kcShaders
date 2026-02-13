@@ -59,35 +59,6 @@ void GBufferPass::execute(RenderContext& ctx) {
         item.mesh->draw();
     }
     
-    // // Debug: Check first pixel of G-Buffer
-    // if (firstFrame_) {
-    //     glReadBuffer(GL_COLOR_ATTACHMENT0);
-    //     float albedo[4];
-    //     glReadPixels(ctx.viewportWidth/2, ctx.viewportHeight/2, 1, 1, GL_RGBA, GL_FLOAT, albedo);
-    //     std::cout << "[GBufferPass] Center pixel albedo: (" 
-    //               << albedo[0] << ", " << albedo[1] << ", " << albedo[2] << ", " << albedo[3] << ")\n";
-        
-    //     glReadBuffer(GL_COLOR_ATTACHMENT1);
-    //     float normal[4];
-    //     glReadPixels(ctx.viewportWidth/2, ctx.viewportHeight/2, 1, 1, GL_RGBA, GL_FLOAT, normal);
-    //     std::cout << "[GBufferPass] Center pixel normal: (" 
-    //               << normal[0] << ", " << normal[1] << ", " << normal[2] << ", " << normal[3] << ")\n";
-        
-    //     glReadBuffer(GL_COLOR_ATTACHMENT2);
-    //     float position[4];
-    //     glReadPixels(ctx.viewportWidth/2, ctx.viewportHeight/2, 1, 1, GL_RGBA, GL_FLOAT, position);
-    //     std::cout << "[GBufferPass] Center pixel position: (" 
-    //               << position[0] << ", " << position[1] << ", " << position[2] << ", " << position[3] << ")\n";
-        
-    //     glReadBuffer(GL_COLOR_ATTACHMENT3);
-    //     float material[4];
-    //     glReadPixels(ctx.viewportWidth/2, ctx.viewportHeight/2, 1, 1, GL_RGBA, GL_FLOAT, material);
-    //     std::cout << "[GBufferPass] Center pixel material (M/R/AO): (" 
-    //               << material[0] << ", " << material[1] << ", " << material[2] << ", " << material[3] << ")\n";
-        
-    //     firstFrame_ = false;
-    // }
-    
     // Unbind G-Buffer
     gbuffer_->unbind();
 }

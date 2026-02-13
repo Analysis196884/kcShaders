@@ -150,6 +150,8 @@ private:
         int samples_per_pixel = 1;
     } raytracing_params;
     
+    bool ssao_enabled_ = true;  // SSAO toggle
+    
     float shader_check_timer_;
     
     // Fonts

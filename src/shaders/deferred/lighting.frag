@@ -9,9 +9,11 @@ uniform sampler2D GPosition;    // Texture unit 0 - World-space position
 uniform sampler2D GNormal;      // Texture unit 1 - World-space normal
 uniform sampler2D GAlbedo;      // Texture unit 2 - Albedo
 uniform sampler2D GMaterial;    // Texture unit 3 - Metallic, roughness, AO
+uniform sampler2D GSSAO;        // Texture unit 4 - SSAO (optional)
 
 uniform vec3 viewPos;
 uniform mat4 uView;
+uniform int useSSAO;            // 1 if SSAO is enabled, 0 otherwise
 
 // Light structure definitions
 struct DirectionalLight {
@@ -168,6 +170,12 @@ void main()
     float metallic = MaterialData.r;
     float roughness = MaterialData.g;
     float ao = MaterialData.b;
+    
+    // Sample SSAO if enabled
+    float ssao = 1.0;
+    if (useSSAO == 1) {
+        ssao = texture(GSSAO, TexCoord).r;
+    }
 
     // Basic validity guard
     if (length(Normal) < 1e-4) {
@@ -241,7 +249,8 @@ void main()
         Lo += calculateLighting(L, radiance, N, V, F0, roughness, metallic, Albedo);
     }
 
-    vec3 ambient = ambientLight * Albedo * ao;
+    // Apply SSAO to ambient term
+    vec3 ambient = ambientLight * Albedo * ao * ssao;
     vec3 color = ambient + Lo;
 
     // Gamma correction

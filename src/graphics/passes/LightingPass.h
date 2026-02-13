@@ -26,6 +26,11 @@ public:
         fbWidth_ = width;
         fbHeight_ = height;
     }
+    
+    // Set SSAO texture (0 to disable)
+    void setSSAOTexture(GLuint texture) {
+        ssaoTexture_ = texture;
+    }
 
 private:
     void bindGBufferTextures();
@@ -37,6 +42,7 @@ private:
     GLuint quadVAO_;
     int fbWidth_;
     int fbHeight_;
+    GLuint ssaoTexture_ = 0;  // SSAO texture (0 = disabled)
     bool firstFrame_ = true;
 };
 

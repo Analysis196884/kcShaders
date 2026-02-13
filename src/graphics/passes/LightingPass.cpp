@@ -76,8 +76,8 @@ void LightingPass::execute(RenderContext& ctx) {
     // Re-enable depth test
     glEnable(GL_DEPTH_TEST);
     
-    // Unbind textures
-    for (int i = 0; i < 4; i++) {
+    // Unbind textures (including SSAO texture at unit 4)
+    for (int i = 0; i < 5; i++) {
         glActiveTexture(GL_TEXTURE0 + i);
         glBindTexture(GL_TEXTURE_2D, 0);
     }
@@ -86,6 +86,8 @@ void LightingPass::execute(RenderContext& ctx) {
     // Unbind framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glFlush();
+    
+    firstFrame_ = false;
 }
 
 void LightingPass::resize(int width, int height) {
@@ -110,6 +112,16 @@ void LightingPass::bindGBufferTextures() {
     glActiveTexture(GL_TEXTURE3);
     glBindTexture(GL_TEXTURE_2D, gbuffer_->getMaterialTexture());
     lightingShader_->setInt("GMaterial", 3);
+    
+    // Bind SSAO texture if available
+    if (ssaoTexture_ != 0) {
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D, ssaoTexture_);
+        lightingShader_->setInt("GSSAO", 4);
+        lightingShader_->setInt("useSSAO", 1);
+    } else {
+        lightingShader_->setInt("useSSAO", 0);
+    }
 }
 
 void LightingPass::setLightUniforms(RenderContext& ctx) {

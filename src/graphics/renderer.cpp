@@ -468,7 +468,11 @@ bool Renderer::loadDeferredShaders(
     const std::string& geom_vert,
     const std::string& geom_frag,
     const std::string& light_vert,
-    const std::string& light_frag
+    const std::string& light_frag,
+    const std::string& ssao_vert,
+    const std::string& ssao_frag,
+    const std::string& ssao_blur_vert,
+    const std::string& ssao_blur_frag
 )
 {   
     if (!deferredPipeline_) {
@@ -476,7 +480,12 @@ bool Renderer::loadDeferredShaders(
         return false;
     }
     
-    return deferredPipeline_->loadShaders(geom_vert, geom_frag, light_vert, light_frag);
+    return deferredPipeline_->loadShaders(
+        geom_vert, geom_frag, 
+        light_vert, light_frag,
+        ssao_vert, ssao_frag,
+        ssao_blur_vert, ssao_blur_frag
+    );
 }
 
 bool Renderer::loadShadertoyShaders(const std::string& vertex_path, const std::string& fragment_path)
@@ -523,6 +532,16 @@ void Renderer::setRayTracingParameters(int max_bounces, int samples_per_pixel)
     
     raytracingPipeline_->setMaxBounces(max_bounces);
     raytracingPipeline_->setSamplesPerPixel(samples_per_pixel);
+}
+
+void Renderer::enableDeferredSSAO(bool enable)
+{
+    if (!deferredPipeline_) {
+        std::cerr << "[Renderer] Deferred pipeline not initialized\n";
+        return;
+    }
+    
+    deferredPipeline_->enableSSAO(enable);
 }
 
 } // namespace kcShaders
