@@ -151,6 +151,7 @@ private:
     } raytracing_params;
     
     bool ssao_enabled_ = true;  // SSAO toggle
+    bool shadows_enabled_ = true;  // Shadows toggle
     
     float shader_check_timer_;
     

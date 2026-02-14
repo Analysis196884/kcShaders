@@ -3,6 +3,7 @@
 #include "../passes/GBufferPass.h"
 #include "../passes/LightingPass.h"
 #include "../passes/SSAOPass.h"
+#include "../passes/ShadowMapPass.h"
 #include "../gbuffer.h"
 #include <iostream>
 
@@ -17,6 +18,7 @@ DeferredPipeline::DeferredPipeline(GBuffer* gbuffer, GLuint fbo, GLuint quadVAO,
     , gbufferPass_(nullptr)
     , lightingPass_(nullptr)
     , ssaoPass_(nullptr)
+    , shadowMapPass_(nullptr)
 {
 }
 
@@ -44,7 +46,9 @@ bool DeferredPipeline::loadShaders(
     const std::string& ssaoVert,
     const std::string& ssaoFrag,
     const std::string& ssaoBlurVert,
-    const std::string& ssaoBlurFrag
+    const std::string& ssaoBlurFrag,
+    const std::string& shadowVert,
+    const std::string& shadowFrag
 )
 {
     std::cout << "[DeferredPipeline] Loading shaders...\n";
@@ -88,6 +92,20 @@ bool DeferredPipeline::loadShaders(
         }
     }
     
+    // Load shadow shaders if provided
+    std::unique_ptr<ShaderProgram> tempShadowShader;
+    bool hasShadow = !shadowVert.empty() && !shadowFrag.empty();
+    
+    if (hasShadow) {
+        std::cout << "  Shadow: " << shadowVert << " + " << shadowFrag << "\n";
+        
+        tempShadowShader = std::make_unique<ShaderProgram>();
+        if (!tempShadowShader->loadFromFiles(shadowVert, shadowFrag)) {
+            std::cerr << "[DeferredPipeline] Failed to load shadow shader\n";
+            return false;
+        }
+    }
+    
     // Only update if all required shaders loaded successfully
     geometryShader_ = std::move(tempGeometryShader);
     lightingShader_ = std::move(tempLightingShader);
@@ -97,8 +115,22 @@ bool DeferredPipeline::loadShaders(
         ssaoBlurShader_ = std::move(tempSsaoBlurShader);
     }
     
+    if (hasShadow) {
+        shadowShader_ = std::move(tempShadowShader);
+    }
+    
     // Create passes with the new valid shaders
     auto gbufferPass = std::make_unique<GBufferPass>(gbuffer_, geometryShader_.get());
+    
+    // Create shadow map pass if shader is loaded
+    std::unique_ptr<ShadowMapPass> shadowMapPass;
+    if (hasShadow && shadowShader_) {
+        shadowMapPass = std::make_unique<ShadowMapPass>(shadowShader_.get(), 2048);
+        shadowMapPass->setup();
+        shadowMapPass_ = shadowMapPass.get();  // Set the pointer!
+    } else {
+        shadowMapPass_ = nullptr;
+    }
     
     // Create SSAO pass if shaders are loaded
     std::unique_ptr<SSAOPass> ssaoPass;
@@ -131,6 +163,13 @@ bool DeferredPipeline::loadShaders(
     
     // Transfer ownership to passes_ vector
     passes_.clear();
+    
+    // Shadow map pass runs first (before geometry)
+    if (shadowMapPass) {
+        passes_.push_back(std::move(shadowMapPass));
+        shadowsEnabled_ = true;  // Enable shadows by default if shader is loaded
+    }
+    
     passes_.push_back(std::move(gbufferPass));
     
     // Add SSAO pass if available (will be used based on ssaoEnabled_ flag)
@@ -165,10 +204,21 @@ void DeferredPipeline::execute(RenderContext& ctx)
     }
     
     // Execute all passes in sequence
-    // Order: GBuffer -> (optional) SSAO -> Lighting
+    // Order: ShadowMap -> GBuffer -> (optional) SSAO -> Lighting
     for (auto& pass : passes_) {
         if (pass) {  // Check pass pointer is valid
             pass->execute(ctx);
+            
+            // After shadow map pass, set shadow data for lighting pass
+            if (dynamic_cast<ShadowMapPass*>(pass.get()) && shadowMapPass_ && lightingPass_) {
+                if (shadowsEnabled_) {
+                    GLuint shadowMap = shadowMapPass_->getShadowMap();
+                    glm::mat4 lightSpaceMatrix = shadowMapPass_->getLightSpaceMatrix();
+                    lightingPass_->setShadowMap(shadowMap, lightSpaceMatrix);
+                } else {
+                    lightingPass_->setShadowMap(0, glm::mat4(1.0f));
+                }
+            }
             
             // After SSAO pass executes, set the SSAO texture for lighting pass
             if (dynamic_cast<SSAOPass*>(pass.get()) && ssaoPass_ && lightingPass_) {
@@ -194,6 +244,17 @@ void DeferredPipeline::enableSSAO(bool enable)
     std::cout << "[DeferredPipeline] SSAO " << (enable ? "enabled" : "disabled") << "\n";
 }
 
+void DeferredPipeline::enableShadows(bool enable)
+{
+    if (!shadowMapPass_) {
+        std::cerr << "[DeferredPipeline] Shadow map pass not available\n";
+        return;
+    }
+    
+    shadowsEnabled_ = enable;
+    std::cout << "[DeferredPipeline] Shadows " << (enable ? "enabled" : "disabled") << "\n";
+}
+
 void DeferredPipeline::resize(int width, int height)
 {
     width_ = width;
@@ -212,9 +273,11 @@ void DeferredPipeline::cleanup()
     lightingShader_.reset();
     ssaoShader_.reset();
     ssaoBlurShader_.reset();
+    shadowShader_.reset();
     gbufferPass_ = nullptr;
     lightingPass_ = nullptr;
     ssaoPass_ = nullptr;
+    shadowMapPass_ = nullptr;
 }
 
 } // namespace kcShaders

@@ -2,6 +2,7 @@
 
 #include "../RenderPass.h"
 #include "../ShaderProgram.h"
+#include <glm/glm.hpp>
 
 namespace kcShaders {
 
@@ -31,6 +32,12 @@ public:
     void setSSAOTexture(GLuint texture) {
         ssaoTexture_ = texture;
     }
+    
+    // Set shadow map texture (0 to disable) and light space matrix
+    void setShadowMap(GLuint texture, const glm::mat4& lightSpaceMatrix) {
+        shadowMapTexture_ = texture;
+        lightSpaceMatrix_ = lightSpaceMatrix;
+    }
 
 private:
     void bindGBufferTextures();
@@ -43,6 +50,8 @@ private:
     int fbWidth_;
     int fbHeight_;
     GLuint ssaoTexture_ = 0;  // SSAO texture (0 = disabled)
+    GLuint shadowMapTexture_ = 0;  // Shadow map texture (0 = disabled)
+    glm::mat4 lightSpaceMatrix_;   // Light space transform matrix
     bool firstFrame_ = true;
 };
 

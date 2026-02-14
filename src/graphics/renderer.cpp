@@ -472,7 +472,9 @@ bool Renderer::loadDeferredShaders(
     const std::string& ssao_vert,
     const std::string& ssao_frag,
     const std::string& ssao_blur_vert,
-    const std::string& ssao_blur_frag
+    const std::string& ssao_blur_frag,
+    const std::string& shadow_vert,
+    const std::string& shadow_frag
 )
 {   
     if (!deferredPipeline_) {
@@ -484,7 +486,8 @@ bool Renderer::loadDeferredShaders(
         geom_vert, geom_frag, 
         light_vert, light_frag,
         ssao_vert, ssao_frag,
-        ssao_blur_vert, ssao_blur_frag
+        ssao_blur_vert, ssao_blur_frag,
+        shadow_vert, shadow_frag
     );
 }
 
@@ -542,6 +545,16 @@ void Renderer::enableDeferredSSAO(bool enable)
     }
     
     deferredPipeline_->enableSSAO(enable);
+}
+
+void Renderer::enableDeferredShadows(bool enable)
+{
+    if (!deferredPipeline_) {
+        std::cerr << "[Renderer] Deferred pipeline not initialized\n";
+        return;
+    }
+    
+    deferredPipeline_->enableShadows(enable);
 }
 
 } // namespace kcShaders

@@ -10,10 +10,13 @@ uniform sampler2D GNormal;      // Texture unit 1 - World-space normal
 uniform sampler2D GAlbedo;      // Texture unit 2 - Albedo
 uniform sampler2D GMaterial;    // Texture unit 3 - Metallic, roughness, AO
 uniform sampler2D GSSAO;        // Texture unit 4 - SSAO (optional)
+uniform sampler2D shadowMap;    // Texture unit 5 - Shadow map (optional)
 
 uniform vec3 viewPos;
 uniform mat4 uView;
 uniform int useSSAO;            // 1 if SSAO is enabled, 0 otherwise
+uniform int useShadows;         // 1 if shadows are enabled, 0 otherwise
+uniform mat4 lightSpaceMatrix;  // Transform to light space for shadow mapping
 
 // Light structure definitions
 struct DirectionalLight {
@@ -132,6 +135,47 @@ vec3 calculatePBR(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 albedo, float meta
     return (kD * albedo / PI + specular) * radiance * max(NdotL, 0.0);
 }
 
+// Shadow calculation with PCF (Percentage Closer Filtering)
+float calculateShadow(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
+{
+    // Perform perspective divide
+    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    
+    // Transform to [0,1] range
+    projCoords = projCoords * 0.5 + 0.5;
+    
+    // Outside shadow map bounds = no shadow
+    if (projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || 
+        projCoords.y < 0.0 || projCoords.y > 1.0) {
+        return 0.0;
+    }
+    
+    // Get closest depth value from shadow map
+    float closestDepth = texture(shadowMap, projCoords.xy).r;
+    float currentDepth = projCoords.z;
+    
+    // Debug: If closestDepth is 1.0 (border color), shadow map might not be rendering
+    // if (closestDepth >= 0.9999) return 0.0;  // Uncomment to test
+    
+    // Calculate bias based on surface angle to light
+    float bias = max(0.005 * (1.0 - dot(normal, lightDir)), 0.001);
+    
+    // PCF (Percentage Closer Filtering) for soft shadows
+    float shadow = 0.0;
+    vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
+    for(int x = -1; x <= 1; ++x)
+    {
+        for(int y = -1; y <= 1; ++y)
+        {
+            float pcfDepth = texture(shadowMap, projCoords.xy + vec2(x, y) * texelSize).r;
+            shadow += currentDepth - bias > pcfDepth ? 1.0 : 0.0;
+        }
+    }
+    shadow /= 9.0;
+    
+    return shadow;
+}
+
 // Unified lighting helper (matches forward shader behavior)
 vec3 calculateLighting(vec3 L, vec3 radiance, vec3 N, vec3 V, vec3 F0, float roughness, float metallic, vec3 albedo)
 {
@@ -196,10 +240,19 @@ void main()
     vec3 Lo = vec3(0.0);
 
     // Directional lights
+    float shadow = 0.0;
     for (int i = 0; i < numDirLights && i < MAX_DIR_LIGHTS; ++i) {
         vec3 L = normalize(-dirLights[i].direction);
         vec3 radiance = dirLights[i].color * dirLights[i].intensity;
-        Lo += calculateLighting(L, radiance, N, V, F0, roughness, metallic, Albedo);
+        
+        // Calculate shadow if enabled (only for first directional light)
+        shadow = 0.0;
+        if (useShadows == 1) {
+            vec4 fragPosLightSpace = lightSpaceMatrix * vec4(FragPos, 1.0);
+            shadow = calculateShadow(fragPosLightSpace, N, L);
+        }
+        
+        Lo += calculateLighting(L, radiance, N, V, F0, roughness, metallic, Albedo) * (1.0 - shadow);
     }
 
     // Point lights

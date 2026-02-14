@@ -54,7 +54,9 @@ class Renderer {
         const std::string& ssao_vert = "../../src/shaders/deferred/ssao.vert",
         const std::string& ssao_frag = "../../src/shaders/deferred/ssao.frag",
         const std::string& ssao_blur_vert = "../../src/shaders/deferred/ssao_blur.vert",
-        const std::string& ssao_blur_frag = "../../src/shaders/deferred/ssao_blur.frag"
+        const std::string& ssao_blur_frag = "../../src/shaders/deferred/ssao_blur.frag",
+        const std::string& shadow_vert = "../../src/shaders/deferred/shadow_map.vert",
+        const std::string& shadow_frag = "../../src/shaders/deferred/shadow_map.frag"
     );
     bool loadShadertoyShaders(const std::string& vertex_path, const std::string& fragment_path);
     bool loadRayTracingShaders(const std::string& compute_path, const std::string& display_vert, const std::string& display_frag);
@@ -62,6 +64,7 @@ class Renderer {
     // API for setting parameters of rendering pipelines
     void setRayTracingParameters(int max_bounces, int samples_per_pixel);
     void enableDeferredSSAO(bool enable);
+    void enableDeferredShadows(bool enable);
 
   private:
     void create_framebuffer();

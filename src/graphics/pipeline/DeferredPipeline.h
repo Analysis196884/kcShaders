@@ -12,6 +12,7 @@ class ShaderProgram;
 class GBufferPass;
 class LightingPass;
 class SSAOPass;
+class ShadowMapPass;
 
 /**
  * @brief Deferred rendering pipeline
@@ -49,7 +50,9 @@ public:
         const std::string& ssaoVert = "",
         const std::string& ssaoFrag = "",
         const std::string& ssaoBlurVert = "",
-        const std::string& ssaoBlurFrag = ""
+        const std::string& ssaoBlurFrag = "",
+        const std::string& shadowVert = "",
+        const std::string& shadowFrag = ""
     );
     
     /**
@@ -63,6 +66,18 @@ public:
      * @return true if SSAO is enabled
      */
     bool isSSAOEnabled() const { return ssaoEnabled_; }
+    
+    /**
+     * @brief Enable or disable shadows
+     * @param enable Whether to enable shadows
+     */
+    void enableShadows(bool enable);
+    
+    /**
+     * @brief Check if shadows are enabled
+     * @return true if shadows are enabled
+     */
+    bool isShadowsEnabled() const { return shadowsEnabled_; }
 
 private:
     GBuffer* gbuffer_;
@@ -75,12 +90,15 @@ private:
     std::unique_ptr<ShaderProgram> lightingShader_;
     std::unique_ptr<ShaderProgram> ssaoShader_;
     std::unique_ptr<ShaderProgram> ssaoBlurShader_;
+    std::unique_ptr<ShaderProgram> shadowShader_;
     
     GBufferPass* gbufferPass_;      // Non-owning pointer (owned by passes_)
     LightingPass* lightingPass_;    // Non-owning pointer (owned by passes_)
     SSAOPass* ssaoPass_;            // Non-owning pointer (owned by passes_)
+    ShadowMapPass* shadowMapPass_;  // Non-owning pointer (owned by passes_)
     
     bool ssaoEnabled_ = false;
+    bool shadowsEnabled_ = false;
 };
 
 } // namespace kcShaders

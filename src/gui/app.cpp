@@ -688,6 +688,10 @@ void App::RenderControlPanel()
         if (ImGui::Checkbox("Enable SSAO", &ssao_enabled_)) {
             renderer_->enableDeferredSSAO(ssao_enabled_);
         }
+        
+        if (ImGui::Checkbox("Enable Shadows", &shadows_enabled_)) {
+            renderer_->enableDeferredShadows(shadows_enabled_);
+        }
     }
 
     // Camera info and controls

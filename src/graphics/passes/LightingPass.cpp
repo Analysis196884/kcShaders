@@ -76,8 +76,8 @@ void LightingPass::execute(RenderContext& ctx) {
     // Re-enable depth test
     glEnable(GL_DEPTH_TEST);
     
-    // Unbind textures (including SSAO texture at unit 4)
-    for (int i = 0; i < 5; i++) {
+    // Unbind textures (including SSAO at unit 4 and shadow map at unit 5)
+    for (int i = 0; i < 6; i++) {
         glActiveTexture(GL_TEXTURE0 + i);
         glBindTexture(GL_TEXTURE_2D, 0);
     }
@@ -121,6 +121,17 @@ void LightingPass::bindGBufferTextures() {
         lightingShader_->setInt("useSSAO", 1);
     } else {
         lightingShader_->setInt("useSSAO", 0);
+    }
+    
+    // Bind shadow map texture if available
+    if (shadowMapTexture_ != 0) {
+        glActiveTexture(GL_TEXTURE5);
+        glBindTexture(GL_TEXTURE_2D, shadowMapTexture_);
+        lightingShader_->setInt("shadowMap", 5);
+        lightingShader_->setInt("useShadows", 1);
+        lightingShader_->setMat4("lightSpaceMatrix", lightSpaceMatrix_);
+    } else {
+        lightingShader_->setInt("useShadows", 0);
     }
 }
 
